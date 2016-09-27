@@ -218,7 +218,6 @@ class BrainServerConnection:
     @asyncio.coroutine
     def run_simulator_for_training(self, websocket):
         # Start by sending a ready message to the server
-        # TODO: T365: Exchange should start with register first
         yield from self.send_ready(websocket)
 
         message_count = 0
@@ -336,7 +335,9 @@ class BrainServerConnection:
             return
 
         log.info("About to connect to %s", self.brain_api_url)
-        websocket = yield from websockets.connect(self.brain_api_url)
+        websocket = yield from websockets.connect(
+            self.brain_api_url,
+            extra_headers={'Authorization': BonsaiConfig().access_key()})
 
         try:
 

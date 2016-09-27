@@ -10,7 +10,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='bonsai-python',
-    version='0.2.1',
+    version='0.3.0',
     description='A library creating and training AIs with Bonsai BRAIN',
     long_description=long_description,
     url='http://github.com/BonsaiAI/bonsai-python',
@@ -32,11 +32,6 @@ setup(
         'websockets>=3.1,<4',
         'protobuf>=3.0.0,<4',
         'bonsai_config>=0.2.0',
-    ],
-    dependency_links=[
-        # Temporary until we get bonsai-config on PyPI
-        ('git+https://github.com/BonsaiAI/bonsai-config.git'
-            '#egg=bonsai-config-0.2.0'),
     ],
     packages=find_packages()
     )
