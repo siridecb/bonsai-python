@@ -26,6 +26,7 @@ from bonsai.proto.curve_generator_pb2 import MNIST_training_data_schema
 
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
 
 
 class BrainServerConnection:
@@ -237,8 +238,8 @@ class BrainServerConnection:
 
             message_count += 1
             if message_count % 250 == 0:
-                log.info("Handled %i messages from the server so far",
-                         message_count)
+                log.debug("Handled %i messages from the server so far",
+                          message_count)
 
     @asyncio.coroutine
     def run_simulator_for_prediction(self, websocket):
@@ -393,9 +394,8 @@ def parse_base_arguments():
     args = parser.parse_args()
 
     config = BonsaiConfig()
-    partial_url = "ws://{host}:{port}/v1/{user}".format(
-            host=config.host(),
-            port=config.port(),
+    partial_url = "{base}/v1/{user}".format(
+            base=config.brain_websocket_url(),
             user=config.username())
 
     # If the --brain_url flag was specified, use its value literally
@@ -437,9 +437,6 @@ def run_for_training_or_prediction(simulator_name, simulator):
     appropriate command line arguments necessary for running a
     simulator with BrainServerConnection for training or prediction.
     """
-    # Initialize logging.
-    logging.basicConfig(level=logging.INFO)
-
     base_arguments = parse_base_arguments()
     if base_arguments:
         run_with_url(simulator_name, simulator, base_arguments.brain_url)

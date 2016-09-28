@@ -10,7 +10,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='bonsai-python',
-    version='0.3.0',
+    version='0.4.0',
     description='A library creating and training AIs with Bonsai BRAIN',
     long_description=long_description,
     url='http://github.com/BonsaiAI/bonsai-python',
@@ -31,7 +31,7 @@ setup(
     install_requires=[
         'websockets>=3.1,<4',
         'protobuf>=3.0.0,<4',
-        'bonsai_config>=0.2.0',
+        'bonsai_config>=0.3.0',
     ],
     packages=find_packages()
     )
