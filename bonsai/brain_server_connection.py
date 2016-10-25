@@ -4,13 +4,15 @@ functionality intended to make it easy for clients to author simulators
 and generators that communicate with BRAIN backend.
 """
 import argparse
-import asyncio
 import logging
 import os
 from collections import namedtuple
-from urllib.parse import urlparse
+from six.moves.urllib.parse import urlparse
 
-import websockets
+from tornado import gen
+from tornado.ioloop import IOLoop
+from tornado import websocket as websockets
+from tornado.httpclient import HTTPRequest
 
 from bonsai.common.state_to_proto import convert_state_to_proto
 from bonsai.common.message_builder import MessageBuilder
@@ -27,6 +29,28 @@ from bonsai.proto.curve_generator_pb2 import MNIST_training_data_schema
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+
+class ManualClosedException(Exception):
+    pass
+
+
+class WrapSocket():
+    def __init__(self, websocket):
+        self.websocket = websocket
+
+    def send(self, message):
+        self.websocket.write_message(message, binary=True)
+
+    @gen.coroutine
+    def recv(self):
+        msg = yield self.websocket.read_message()
+        if msg is None:
+            raise ManualClosedException()
+        raise gen.Return(msg)
+
+    def close(self):
+        self.websocket.close()
 
 
 class BrainServerConnection:
@@ -140,16 +164,15 @@ class BrainServerConnection:
             to_server.state_data.action_taken = actions_msg.SerializeToString()
         return to_server
 
-    @asyncio.coroutine
     def send_register(self, websocket):
         register = SimulatorToServer()
         register.message_type = SimulatorToServer.REGISTER
         register.register_data.simulator_name = self.simulator_name
-        yield from websocket.send(register.SerializeToString())
+        websocket.send(register.SerializeToString())
 
-    @asyncio.coroutine
+    @gen.coroutine
     def recv_acknowledge_register(self, websocket):
-        from_server_bytes = yield from websocket.recv()
+        from_server_bytes = yield websocket.recv()
         from_server = ServerToSimulator()
         from_server.ParseFromString(from_server_bytes)
 
@@ -172,13 +195,12 @@ class BrainServerConnection:
         self.prediction_schema = MessageBuilder().reconstitute(
             from_server.acknowledge_register_data.prediction_schema)
 
-    @asyncio.coroutine
     def send_ready(self, websocket):
         ready = SimulatorToServer()
         ready.message_type = SimulatorToServer.READY
-        yield from websocket.send(ready.SerializeToString())
+        websocket.send(ready.SerializeToString())
 
-    @asyncio.coroutine
+    @gen.coroutine
     def handle_from_server(self, websocket, from_server):
         if from_server.message_type == ServerToSimulator.SET_PROPERTIES:
             if not from_server.HasField("set_properties_data"):
@@ -186,16 +208,16 @@ class BrainServerConnection:
                     "Received a SET_PROPERTIES message that did "
                     "not contain set_properties_data.")
             self.handle_set_properties(from_server.set_properties_data)
-            yield from self.send_ready(websocket)
+            self.send_ready(websocket)
 
         elif from_server.message_type == ServerToSimulator.START:
             self.simulator.start()
             to_server = self.get_state_message()
-            yield from websocket.send(to_server.SerializeToString())
+            websocket.send(to_server.SerializeToString())
 
         elif from_server.message_type == ServerToSimulator.STOP:
             self.simulator.stop()
-            yield from self.send_ready(websocket)
+            self.send_ready(websocket)
 
         elif from_server.message_type == ServerToSimulator.PREDICTION:
             if not from_server.HasField("prediction_data"):
@@ -205,26 +227,26 @@ class BrainServerConnection:
 
             self.handle_prediction(from_server.prediction_data)
             to_server = self.get_state_message()
-            yield from websocket.send(to_server.SerializeToString())
+            websocket.send(to_server.SerializeToString())
 
         elif from_server.message_type == ServerToSimulator.RESET:
             self.simulator_info.simulator.reset()
-            yield from self.send_ready(websocket)
+            self.send_ready(websocket)
 
         else:
             raise RuntimeError(
                 "Cannot handle ServerToSimulator message with type {}".format(
                     from_server.message_type))
 
-    @asyncio.coroutine
+    @gen.coroutine
     def run_simulator_for_training(self, websocket):
         # Start by sending a ready message to the server
-        yield from self.send_ready(websocket)
+        self.send_ready(websocket)
 
         message_count = 0
         while True:
             # Get a message from the server
-            from_server_bytes = yield from websocket.recv()
+            from_server_bytes = yield websocket.recv()
             from_server = ServerToSimulator()
             from_server.ParseFromString(from_server_bytes)
 
@@ -234,24 +256,24 @@ class BrainServerConnection:
                 return
 
             # Otherwise handle the message
-            yield from self.handle_from_server(websocket, from_server)
+            yield self.handle_from_server(websocket, from_server)
 
             message_count += 1
             if message_count % 250 == 0:
                 log.debug("Handled %i messages from the server so far",
                           message_count)
 
-    @asyncio.coroutine
+    @gen.coroutine
     def run_simulator_for_prediction(self, websocket):
         num_predictions = 0
         while True:
 
             # Send state to the server
             to_server = self.get_state_message()
-            yield from websocket.send(to_server.SerializeToString())
+            websocket.send(to_server.SerializeToString())
 
             # Get a prediction back from the server
-            from_server_bytes = yield from websocket.recv()
+            from_server_bytes = yield websocket.recv()
             from_server = ServerToSimulator()
             from_server.ParseFromString(from_server_bytes)
             self.handle_prediction(from_server.prediction_data)
@@ -280,7 +302,7 @@ class BrainServerConnection:
         next_data_message.image.pixels = next_data["image"].pixels
         return next_data_message
 
-    @asyncio.coroutine
+    @gen.coroutine
     def run_generator_for_training(self, websocket):
         if not self.is_generator:
             raise RuntimeError(
@@ -292,10 +314,10 @@ class BrainServerConnection:
 
             # Generators should just always send next data messages
             to_server = self.get_next_data_message()
-            yield from websocket.send(to_server.SerializeToString())
+            websocket.send(to_server.SerializeToString())
 
             # Get a message from the server
-            from_server_bytes = yield from websocket.recv()
+            from_server_bytes = yield websocket.recv()
             from_server = ServerToSimulator()
             from_server.ParseFromString(from_server_bytes)
 
@@ -317,7 +339,7 @@ class BrainServerConnection:
                 log.info("Handled %i messages from the server so far",
                          message_count)
 
-    @asyncio.coroutine
+    @gen.coroutine
     def run_until_complete(self):
         if self.is_training and self.is_generator:
             log.info("Running generator %s for training",
@@ -336,26 +358,30 @@ class BrainServerConnection:
             return
 
         log.info("About to connect to %s", self.brain_api_url)
-        websocket = yield from websockets.connect(
-            self.brain_api_url,
-            extra_headers={'Authorization': BonsaiConfig().access_key()})
+        req = HTTPRequest(self.brain_api_url, connect_timeout=60,
+                          request_timeout=60)
+        req.headers['Authorization'] = BonsaiConfig().access_key()
+        f = websockets.WebSocketClientConnection(IOLoop.current(), req)
+        websocket = yield f.connect_future
+        wrapped = WrapSocket(websocket)
 
         try:
 
             # The first step in all modes is to send a register message
             # and receive an aknowledge register message.
-            yield from self.send_register(websocket)
-            yield from self.recv_acknowledge_register(websocket)
+            self.send_register(wrapped)
+            yield self.recv_acknowledge_register(wrapped)
 
             # Run the mode specific coroutine
-            yield from run_coro(websocket)
+            yield run_coro(wrapped)
 
-        except websockets.exceptions.ConnectionClosed as e:
+        except (websockets.WebSocketClosedError, ManualClosedException):
+            code = websocket.close_code
+            reason = websocket.close_reason
             log.error("Connection to '%s' is closed, code='%s', reason='%s'",
-                      self.brain_api_url, e.code, e.reason)
-
+                      self.brain_api_url, code, reason)
         finally:
-            yield from websocket.close()
+            websocket.close()
 
 
 _BaseArguments = namedtuple('BaseArguments', ['brain_url', 'headless'])
@@ -427,8 +453,7 @@ def run_with_url(simulator_name, simulator, brain_url):
     # Create a connection to the brain server
     server = BrainServerConnection(brain_url, simulator_name, simulator)
 
-    # Run until complete
-    asyncio.get_event_loop().run_until_complete(server.run_until_complete())
+    IOLoop.current().run_sync(server.run_until_complete)
 
 
 def run_for_training_or_prediction(simulator_name, simulator):
