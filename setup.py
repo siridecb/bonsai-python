@@ -39,7 +39,7 @@ setup(
     keywords='bonsai',
     install_requires=[
         'tornado>=4.2.2',
-        'protobuf>=3.0.0,<4',
+        'protobuf>=3.0.0,<=3.1',
         'six>=1.10.0',
         'bonsai_config>=0.3.0',
     ],
