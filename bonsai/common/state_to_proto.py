@@ -41,11 +41,43 @@ def is_proto_type_embedded_message(field):
     return field.type == field.TYPE_MESSAGE
 
 
+def is_proto_type_float(field):
+    """ This function determines if the protobuf-field type should resolve
+    to a float
+    """
+    return field.type == field.TYPE_DOUBLE or field.type == field.TYPE_FLOAT
+
+
+def is_proto_type_integer(field):
+    """ This function determines if the protobuf-field type should resolve
+    to an integer
+    """
+    if (field.type == field.TYPE_INT32 or
+            field.type == field.TYPE_INT64 or
+            field.type == field.TYPE_SINT32 or
+            field.type == field.TYPE_SINT64 or
+            field.type == field.TYPE_UINT32 or
+            field.type == field.TYPE_UINT64):
+        return True
+    return False
+
+
+def is_proto_type_boolean(field):
+    """ This function determines if the protobuf-field type should resolve
+    to a boolean
+    """
+    return field.type == field.TYPE_BOOL
+
+
 def convert_state_to_proto(state_msg, state):
     for field in state_msg.DESCRIPTOR.fields:
         # If the field is a message, assume it is Luminance.
         if is_proto_type_embedded_message(field):
             build_proto_from_embedded_type(
                 field.message_type, field.name, state[field.name], state_msg)
-        else:
-            setattr(state_msg, field.name, state[field.name])
+        elif is_proto_type_float(field):
+            setattr(state_msg, field.name, float(state[field.name]))
+        elif is_proto_type_integer(field):
+            setattr(state_msg, field.name, int(state[field.name]))
+        elif is_proto_type_boolean(field):
+            setattr(state_msg, field.name, bool(state[field.name]))

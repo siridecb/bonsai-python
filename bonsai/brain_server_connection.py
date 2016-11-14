@@ -5,386 +5,51 @@ and generators that communicate with BRAIN backend.
 """
 import argparse
 import logging
-import os
 from collections import namedtuple
-from six.moves.urllib.parse import urlparse
 
-from tornado import gen
-from tornado.ioloop import IOLoop
-from tornado import websocket as websockets
-from tornado.httpclient import HTTPRequest
-
-from bonsai.common.state_to_proto import convert_state_to_proto
-from bonsai.common.message_builder import MessageBuilder
-from bonsai.generator import Generator
-from bonsai.simulator import Simulator
-from bonsai.proto.generator_simulator_api_pb2 import (
-    SimulatorToServer, ServerToSimulator)
 from bonsai_config import BonsaiConfig
-
-# TODO: Once we support fully dynamic schemas for generators, we can
-# remove this.
-from bonsai.proto.curve_generator_pb2 import MNIST_training_data_schema
-
+from bonsai.simulator import Simulator
+from bonsai.generator import Generator
+from bonsai.connections import SimulatorConnection, GeneratorConnection
+from bonsai.drivers import SimulatorDriverForTraining
+from bonsai.drivers import SimulatorDriverForPrediction
+from bonsai.drivers import GeneratorDriverForTraining
+from bonsai.drivers import GeneratorDriverForPrediction
+from bonsai import tornado_event_loop
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 
-class ManualClosedException(Exception):
+# The run methods in this dictionary have identical signatures. Asyncio is only
+# available on Python 3.5 and higher. Runtime errors will be raised if you try
+# to use the asyncio event loop on Python 3.4 and earlier, or any version of
+# Python 2 (even with Trollius).
+_RUN_EVENT_LOOP = {
+    'tornado': tornado_event_loop.run,
+}
+
+# The methods in this dictionary have identical signatures. Asyncio is only
+# available on Python 3.5 and higher. Runtime errors will be raised if you try
+# to use the asyncio event loop on Python 3.4 and earlier, or any version of
+# Python 2 (even with Trollius).
+# Each method should return a tuple of the simulator run task (first) and a
+# file recording task (second).
+_CREATE_TASKS = {
+    'tornado': tornado_event_loop.create_tasks,
+}
+
+try:
+    from bonsai import asyncio_event_loop
+    _RUN_EVENT_LOOP['asyncio'] = asyncio_event_loop.run
+    _CREATE_TASKS['asyncio'] = asyncio_event_loop.create_tasks
+except:
     pass
 
 
-class WrapSocket():
-    def __init__(self, websocket):
-        self.websocket = websocket
-
-    def send(self, message):
-        self.websocket.write_message(message, binary=True)
-
-    @gen.coroutine
-    def recv(self):
-        msg = yield self.websocket.read_message()
-        if msg is None:
-            raise ManualClosedException()
-        raise gen.Return(msg)
-
-    def close(self):
-        self.websocket.close()
-
-
-class BrainServerConnection:
-
-    def __init__(self, brain_api_url, simulator_name, simulator):
-        self._current_reward_name = None
-
-        parse_result = urlparse(brain_api_url)
-        path_parts = parse_result.path.strip("/").split("/")
-        # Simulators connecting to a brain for training should have
-        # a path that has five components:
-        # /v1/<username>/<brainname>/sims/ws
-        if len(path_parts) == 5:
-            self.is_training = True
-        # Simulators connecting to a brain for prediction should have
-        # a path that has six components:
-        # /v1/<username>/<brainname>/<version>/predictions/ws
-        elif len(path_parts) == 6:
-            self.is_training = False
-        # If the split path doesn't have 4 or 5 components, continue
-        # anyway assuming prediction, but output a log warning.
-        else:
-            log.warning(
-                "The input brain server API URL does not look "
-                "correct. If your simulator does not connect, please "
-                "double check your URL.")
-            self.is_training = False
-
-        self.brain_api_url = brain_api_url
-
-        # Simulator names should conform to inkling rules.
-        # TODO: Enforce full inkling rules.
-        if not simulator_name:
-            raise TypeError("Simulator name cannot be none or empty")
-        if " " in simulator_name:
-            raise ValueError("Simulator names cannot contain spaces")
-        self.simulator_name = simulator_name
-
-        # Ensure the simulator argument has the correct type
-        if isinstance(simulator, Simulator):
-            self.is_generator = False
-        elif isinstance(simulator, Generator):
-            self.is_generator = True
-        else:
-            raise TypeError(
-                "Argument 'simulator' must be an object of type "
-                "bonsai.Generator or bonsai.Simulator")
-        self.simulator = simulator
-
-    def handle_set_properties(self, set_properties_data):
-        log.debug("Received set_properties message")
-
-        # Parse request_data into a properties message.
-        properties_message = self.properties_schema()
-        properties_message.ParseFromString(
-            set_properties_data.dynamic_properties)
-
-        # Create a dictionary of the property names to values.
-        properties = {}
-        for field in properties_message.DESCRIPTOR.fields:
-            properties[field.name] = getattr(properties_message, field.name)
-
-        # Call set_properties on the simulator.
-        self.simulator.set_properties(**properties)
-
-        # Set current reward name.
-        self._current_reward_name = set_properties_data.reward_name
-
-        # Set the predictions schema
-        self.prediction_schema = MessageBuilder().reconstitute(
-            set_properties_data.prediction_schema)
-
-    def handle_prediction(self, prediction_data):
-        log.debug("Received prediction message")
-
-        # Parse request_data into a properties message.
-        predictions_msg = self.prediction_schema()
-        predictions_msg.ParseFromString(
-            prediction_data.dynamic_prediction)
-
-        # Create a dictionary of the property names to values.
-        predictions = {}
-        for field in predictions_msg.DESCRIPTOR.fields:
-            predictions[field.name] = getattr(predictions_msg, field.name)
-
-        self.simulator.notify_prediction_received(predictions)
-
-    def get_state_message(self):
-        state = self.simulator.get_state()
-
-        if self._current_reward_name:
-            reward = getattr(self.simulator, self._current_reward_name)()
-        else:
-            reward = 0.0
-
-        terminal = self.simulator.get_terminal()
-        state_message = self.output_schema()
-        convert_state_to_proto(state_message, state)
-
-        to_server = SimulatorToServer()
-        to_server.message_type = SimulatorToServer.STATE
-        to_server.state_data.state = state_message.SerializeToString()
-        to_server.state_data.reward = reward
-        to_server.state_data.terminal = terminal
-
-        # add action taken
-        last_action = self.simulator.get_last_action()
-        if last_action is not None:
-            actions_msg = self.prediction_schema()
-            convert_state_to_proto(actions_msg, last_action)
-            to_server.state_data.action_taken = actions_msg.SerializeToString()
-        return to_server
-
-    def send_register(self, websocket):
-        register = SimulatorToServer()
-        register.message_type = SimulatorToServer.REGISTER
-        register.register_data.simulator_name = self.simulator_name
-        websocket.send(register.SerializeToString())
-
-    @gen.coroutine
-    def recv_acknowledge_register(self, websocket):
-        from_server_bytes = yield websocket.recv()
-        from_server = ServerToSimulator()
-        from_server.ParseFromString(from_server_bytes)
-
-        if from_server.message_type != ServerToSimulator.ACKNOWLEDGE_REGISTER:
-            raise RuntimeError(
-                "Expected to receive an ACKNOWLEDGE_REGISTER message, but "
-                "instead received message of type {}".format(
-                    from_server.message_type))
-
-        if not from_server.HasField("acknowledge_register_data"):
-            raise RuntimeError(
-                "Received an ACKNOWLEDGE_REGISTER message that did "
-                "not contain acknowledge_register_data.")
-
-        # Reconstitute the simulator schemas.
-        self.properties_schema = MessageBuilder().reconstitute(
-            from_server.acknowledge_register_data.properties_schema)
-        self.output_schema = MessageBuilder().reconstitute(
-            from_server.acknowledge_register_data.output_schema)
-        self.prediction_schema = MessageBuilder().reconstitute(
-            from_server.acknowledge_register_data.prediction_schema)
-
-    def send_ready(self, websocket):
-        ready = SimulatorToServer()
-        ready.message_type = SimulatorToServer.READY
-        websocket.send(ready.SerializeToString())
-
-    @gen.coroutine
-    def handle_from_server(self, websocket, from_server):
-        if from_server.message_type == ServerToSimulator.SET_PROPERTIES:
-            if not from_server.HasField("set_properties_data"):
-                raise RuntimeError(
-                    "Received a SET_PROPERTIES message that did "
-                    "not contain set_properties_data.")
-            self.handle_set_properties(from_server.set_properties_data)
-            self.send_ready(websocket)
-
-        elif from_server.message_type == ServerToSimulator.START:
-            self.simulator.start()
-            to_server = self.get_state_message()
-            websocket.send(to_server.SerializeToString())
-
-        elif from_server.message_type == ServerToSimulator.STOP:
-            self.simulator.stop()
-            self.send_ready(websocket)
-
-        elif from_server.message_type == ServerToSimulator.PREDICTION:
-            if not from_server.HasField("prediction_data"):
-                raise RuntimeError(
-                    "Received a PREDICTION message that did "
-                    "not contain prediction_data.")
-
-            self.handle_prediction(from_server.prediction_data)
-            to_server = self.get_state_message()
-            websocket.send(to_server.SerializeToString())
-
-        elif from_server.message_type == ServerToSimulator.RESET:
-            self.simulator_info.simulator.reset()
-            self.send_ready(websocket)
-
-        else:
-            raise RuntimeError(
-                "Cannot handle ServerToSimulator message with type {}".format(
-                    from_server.message_type))
-
-    @gen.coroutine
-    def run_simulator_for_training(self, websocket):
-        # Start by sending a ready message to the server
-        self.send_ready(websocket)
-
-        message_count = 0
-        while True:
-            # Get a message from the server
-            from_server_bytes = yield websocket.recv()
-            from_server = ServerToSimulator()
-            from_server.ParseFromString(from_server_bytes)
-
-            # Exit if it is a FINISHED message
-            if from_server.message_type == ServerToSimulator.FINISHED:
-                log.info("Training is finished!")
-                return
-
-            # Otherwise handle the message
-            yield self.handle_from_server(websocket, from_server)
-
-            message_count += 1
-            if message_count % 250 == 0:
-                log.debug("Handled %i messages from the server so far",
-                          message_count)
-
-    @gen.coroutine
-    def run_simulator_for_prediction(self, websocket):
-        num_predictions = 0
-        while True:
-
-            # Send state to the server
-            to_server = self.get_state_message()
-            websocket.send(to_server.SerializeToString())
-
-            # Get a prediction back from the server
-            from_server_bytes = yield websocket.recv()
-            from_server = ServerToSimulator()
-            from_server.ParseFromString(from_server_bytes)
-            self.handle_prediction(from_server.prediction_data)
-
-            num_predictions += 1
-            if num_predictions % 250 == 0:
-                log.info("Recieved %i predictions", num_predictions)
-
-    def get_next_data_message(self):
-        if not self.is_generator:
-            raise RuntimeError(
-                "Method get_next_data_message should only be called when a "
-                "generator is being used.")
-
-        next_data = self.simulator.next_data()
-
-        # TODO: We don't support fully dynamic schemas for
-        # generators yet. All of our current generators
-        # currently use the same schema, so we hardcode it here.
-        # It's also harcoded in learnerd in
-        # BatchTrainer._collate_batch_data().
-        next_data_message = MNIST_training_data_schema()
-        next_data_message.label = next_data["label"]
-        next_data_message.image.width = next_data["image"].width
-        next_data_message.image.height = next_data["image"].height
-        next_data_message.image.pixels = next_data["image"].pixels
-        return next_data_message
-
-    @gen.coroutine
-    def run_generator_for_training(self, websocket):
-        if not self.is_generator:
-            raise RuntimeError(
-                "Method run_generator_for_training should only be called "
-                "when a generator is being used.")
-
-        message_count = 0
-        while True:
-
-            # Generators should just always send next data messages
-            to_server = self.get_next_data_message()
-            websocket.send(to_server.SerializeToString())
-
-            # Get a message from the server
-            from_server_bytes = yield websocket.recv()
-            from_server = ServerToSimulator()
-            from_server.ParseFromString(from_server_bytes)
-
-            # Handle FINISHED and SET_PROPERTIES messages, otherwise
-            # ignore the message.
-            if (from_server.message_type ==
-                    ServerToSimulator.SET_PROPERTIES):
-                if not from_server.HasField("set_properties_data"):
-                    raise RuntimeError(
-                        "Received a SET_PROPERTIES message that did "
-                        "not contain set_properties_data.")
-                self.handle_set_properties(from_server.set_properties_data)
-            elif from_server.message_type == ServerToSimulator.FINISHED:
-                log.info("Training is finished!")
-                return
-
-            message_count += 1
-            if message_count % 250 == 0:
-                log.info("Handled %i messages from the server so far",
-                         message_count)
-
-    @gen.coroutine
-    def run_until_complete(self):
-        if self.is_training and self.is_generator:
-            log.info("Running generator %s for training",
-                     self.simulator_name)
-            run_coro = self.run_generator_for_training
-        elif self.is_training and not self.is_generator:
-            log.info("Running simulator %s for training",
-                     self.simulator_name)
-            run_coro = self.run_simulator_for_training
-        elif not self.is_training and not self.is_generator:
-            log.info("Running simulator %s for prediction",
-                     self.simulator_name)
-            run_coro = self.run_simulator_for_prediction
-        else:
-            log.error("Nothing to run!")
-            return
-
-        log.info("About to connect to %s", self.brain_api_url)
-        req = HTTPRequest(self.brain_api_url, connect_timeout=60,
-                          request_timeout=60)
-        req.headers['Authorization'] = BonsaiConfig().access_key()
-        f = websockets.WebSocketClientConnection(IOLoop.current(), req)
-        websocket = yield f.connect_future
-        wrapped = WrapSocket(websocket)
-
-        try:
-
-            # The first step in all modes is to send a register message
-            # and receive an aknowledge register message.
-            self.send_register(wrapped)
-            yield self.recv_acknowledge_register(wrapped)
-
-            # Run the mode specific coroutine
-            yield run_coro(wrapped)
-
-        except (websockets.WebSocketClosedError, ManualClosedException):
-            code = websocket.close_code
-            reason = websocket.close_reason
-            log.error("Connection to '%s' is closed, code='%s', reason='%s'",
-                      self.brain_api_url, code, reason)
-        finally:
-            websocket.close()
-
-
-_BaseArguments = namedtuple('BaseArguments', ['brain_url', 'headless'])
+_BaseArguments = namedtuple('BaseArguments', ['brain_url',
+                                              'headless',
+                                              'recording_file'])
 
 
 def parse_base_arguments():
@@ -409,6 +74,11 @@ def parse_base_arguments():
         "The simulator can be run with or without the graphical environment."
         "By default the graphical environment is shown. Using --headless "
         "will run the simulator without graphical output.")
+    recording_file_help = {
+        "If specified, this should be a path to file where the simulator will "
+        "record a stream of the messages transacted between the simulator and "
+        "the BRAIN backend. If not specified, no recording is made."
+    }
 
     brain_group = parser.add_mutually_exclusive_group(required=True)
     brain_group.add_argument("--train-brain", help=train_brain_help)
@@ -416,8 +86,10 @@ def parse_base_arguments():
     brain_group.add_argument("--brain-url", help=brain_url_help)
     parser.add_argument("--predict-version", help=predict_version_help)
     parser.add_argument("--headless", help=headless_help, action="store_true")
+    parser.add_argument("--messages-out", help=recording_file_help,
+                        default=None)
 
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
 
     config = BonsaiConfig()
     partial_url = "{base}/v1/{user}".format(
@@ -446,22 +118,136 @@ def parse_base_arguments():
                   "must be specified.")
         return
 
-    return _BaseArguments(brain_url, args.headless)
+    return _BaseArguments(brain_url, args.headless, args.messages_out)
 
 
-def run_with_url(simulator_name, simulator, brain_url):
-    # Create a connection to the brain server
-    server = BrainServerConnection(brain_url, simulator_name, simulator)
+def _create_driver(name, simulator_or_generator, brain_api_url):
+    is_for_training = brain_api_url.endswith('/sims/ws')
+    if isinstance(simulator_or_generator, Simulator):
+        connection = SimulatorConnection(simulator_name=name,
+                                         simulator=simulator_or_generator)
+        if is_for_training:
+            return SimulatorDriverForTraining(
+                connection=connection, simulator_connection=connection)
+        else:
+            return SimulatorDriverForPrediction(
+                connection=connection, simulator_connection=connection)
+    elif isinstance(simulator_or_generator, Generator):
+        connection = GeneratorConnection(generator_name=name,
+                                         generator=simulator_or_generator)
+        if is_for_training:
+            return GeneratorDriverForTraining(
+                connection=connection, generator_connection=connection)
+        else:
+            return GeneratorDriverForPrediction(
+                connection=connection, generator_connection=connection)
+    else:
+        error = ('Unrecognized simulator or generator type {}'.format(
+            type(simulator_or_generator).__name__))
+        raise RuntimeError(error)
 
-    IOLoop.current().run_sync(server.run_until_complete)
+
+def create_async_tasks(name,
+                       simulator_or_generator,
+                       brain_url,
+                       event_loop='tornado',
+                       recording_file=None):
+    """
+    Creates tasks for a simulator or generator against the BRAIN server at the
+    provided brain url.
+    :param name: The name to assign to the simulator or generator.
+    :param simulator_or_generator: Instance of the simulator or generator.
+    :param brain_url: URL for reaching the backend BRAIN training or prediction
+                      components.
+    :param event_loop: Specifies which event loop to use to drive the simulator
+                       or generator. May be one of the following: ['tornado',
+                       'asyncio']. Choose 'tornado' if you are running Python
+                       2.7 or Python 3.4 and below. Defaults to 'tornado'.
+    :param recording_file: If defined, records a text file detailing all the
+                           messages communicated among the simulator/generator
+                           and the BRAIN backend to the path specified. This is
+                           useful for mock tests and playbacks. Defaults to
+                           None.
+    """
+    driver = _create_driver(name, simulator_or_generator, brain_url)
+    access_key = BonsaiConfig().access_key()
+
+    try:
+        tasks = _CREATE_TASKS[event_loop](access_key,
+                                          brain_url,
+                                          driver,
+                                          recording_file)
+        return tasks
+    except KeyError:
+        raise ValueError('Invalid event loop {} provided; only supported '
+                         'event loops are {}'.format(event_loop,
+                                                     str(_CREATE_TASKS.keys())
+                                                     ))
 
 
-def run_for_training_or_prediction(simulator_name, simulator):
+def run_with_url(name,
+                 simulator_or_generator,
+                 brain_url,
+                 event_loop='tornado',
+                 recording_file=None):
+    """
+    Runs a simulator or generator against the BRAIN server at the provided
+    brain url.
+    :param name: The name to assign to the simulator or generator.
+    :param simulator_or_generator: Instance of the simulator or generator.
+    :param brain_url: URL for reaching the backend BRAIN training or prediction
+                      components.
+    :param event_loop: Specifies which event loop to use to drive the simulator
+                       or generator. May be one of the following: ['tornado',
+                       'asyncio']. Choose 'tornado' if you are running Python
+                       2.7 or Python 3.4 and below. Defaults to 'tornado'.
+    :param recording_file: If defined, records a text file detailing all the
+                           messages communicated among the simulator/generator
+                           and the BRAIN backend to the path specified. This is
+                           useful for mock tests and playbacks. Defaults to
+                           None.
+    """
+
+    driver = _create_driver(name, simulator_or_generator, brain_url)
+    access_key = BonsaiConfig().access_key()
+
+    try:
+        _RUN_EVENT_LOOP[event_loop](access_key,
+                                    brain_url,
+                                    driver,
+                                    recording_file)
+    except KeyError:
+        raise ValueError('Invalid event loop {} provided; only supported '
+                         'event loops '
+                         'are {}'.format(event_loop,
+                                         str(_RUN_EVENT_LOOP.keys())))
+
+
+def run_for_training_or_prediction(name,
+                                   simulator_or_generator,
+                                   event_loop='tornado'):
     """
     Helper function for client implemented simulators that exposes the
     appropriate command line arguments necessary for running a
     simulator with BrainServerConnection for training or prediction.
+    :param name: The name to assign to the simulator or generator.
+    :param simulator_or_generator: Instance of the simulator or generator.
+    :param brain_url: URL for reaching the backend BRAIN training or prediction
+                      components.
+    :param event_loop: Specifies which event loop to use to drive the simulator
+                       or generator. May be one of the following: ['tornado',
+                       'asyncio']. Choose 'tornado' if you are running Python
+                       2.7 or Python 3.4 and below. Defaults to 'tornado'.
+    :param recording_file: If defined, records a text file detailing all the
+                           messages communicated among the simulator/generator
+                           and the BRAIN backend to the path specified. This is
+                           useful for mock tests and playbacks. Defaults to
+                           None.
     """
     base_arguments = parse_base_arguments()
     if base_arguments:
-        run_with_url(simulator_name, simulator, base_arguments.brain_url)
+        run_with_url(name,
+                     simulator_or_generator,
+                     base_arguments.brain_url,
+                     event_loop,
+                     base_arguments.recording_file)

@@ -14,7 +14,7 @@ def Float32(func):
     return helper
 
 
-class Luminance():
+class Luminance(object):
     """This class represents the inkling built in Luminance type."""
 
     def __init__(self, width, height, pixels):
@@ -24,16 +24,17 @@ class Luminance():
                     "Argument pixels has length {}, should be of length "
                     "{}".format(len(pixels), width * height * 4))
             self.pixels = pixels
-        elif type(pixels) is list:
-            if len(pixels) != width * height:
-                raise ValueError(
-                    "Argument pixels has length {}, should be of length "
-                    "{}".format(len(pixels), width * height))
-            self.pixels = pack('%sf' % len(pixels), *pixels)
         else:
-            raise TypeError(
-                "Argument pixels has type {}, should be type "
-                "bytes or type list".format(type(pixels)))
+            try:  # Assume iterable
+                if len(pixels) != width * height:
+                    raise ValueError(
+                        "Argument pixels has length {}, should be of length "
+                        "{}".format(len(pixels), width * height))
+                self.pixels = pack('%sf' % len(pixels), *pixels)
+            except TypeError:  # Catch failure
+                raise TypeError(
+                    "Argument pixels has type {}, should be type "
+                    "bytes or iterable".format(type(pixels)))
 
         self.width = width
         self.height = height
