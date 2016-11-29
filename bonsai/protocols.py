@@ -15,7 +15,7 @@ class BrainServerProtocol(object):
         :param message: The message to fill.
         :type message: SimulatoToServer message
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_register_acknowledgement(self, message):
         """
@@ -24,7 +24,7 @@ class BrainServerProtocol(object):
         :type message AcknowledgeRegisterData data
         :exception: RuntimeError for any errors
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_set_properties_message(self, message):
         """
@@ -34,7 +34,7 @@ class BrainServerProtocol(object):
         :param message: The message from the server.
         :type SetPropertiesData protobuf object
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
 
 class BrainServerSimulatorProtocol(object):
@@ -49,19 +49,19 @@ class BrainServerSimulatorProtocol(object):
         :param message: The message to fill in.
         :type message: SimulatorToServer message
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_start_message(self):
         """
         Called when the BRAIN server sends a start message to the simulator.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_stop_message(self):
         """
         Called when the BRAIN server sends a stop message to the simulator.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_prediction_message(self, message):
         """
@@ -69,19 +69,19 @@ class BrainServerSimulatorProtocol(object):
         :param message: The message containing the prediction.
         :type PredictionData message.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_finish_message(self):
         """
         Called whe the BRAIN server sends a finished message to the simulator.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def handle_reset_message(self):
         """
         Called when the BRAIN server sends a reset message to the simulator.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def generate_ready_message(self, message):
         """
@@ -89,13 +89,13 @@ class BrainServerSimulatorProtocol(object):
         :param message: The message to fill in.
         :type message: SimulatorToServer message
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def advance(self):
         """
         Called to advance the simulator.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     def generate_state_from_prediction(self, message):
         """
@@ -103,7 +103,7 @@ class BrainServerSimulatorProtocol(object):
         :param message: The message to fill in.
         :type message: SimulatorToServer message
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
 
 class BrainServerGeneratorProtocol(object):
@@ -118,4 +118,4 @@ class BrainServerGeneratorProtocol(object):
         :return: Message containing the next piece of data from the generator
         :rtype: SimulatorToServer protobuf message
         """
-        raise NotImplemented()
+        raise NotImplementedError()

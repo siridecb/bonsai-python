@@ -77,7 +77,7 @@ class Driver(object):
                  indicating that no message needs to be sent back.
         :rtype: SimulatorToServer protobuf message.
         """
-        raise NotImplemented()
+        raise NotImplementedError()
 
     @property
     def state(self):
@@ -172,10 +172,12 @@ class SimulatorDriverForTraining(Driver):
         if not message:
             raise EmptyMessageError('ServerToSimulator')
         try:
-            return self._active_funcs[message.message_type](message)
+            active_func = self._active_funcs[message.message_type]
         except KeyError:
             error = 'one of {}'.format(str(self._active_funcs.keys()))
             raise UnexpectedMessageError(error, message)
+
+        return active_func(message)
 
     def _handle_set_properties_message(self, message):
         """
