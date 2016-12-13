@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import websockets
+from datetime import datetime
 
 from bonsai.drivers import DriverState
 from bonsai.proto.generator_simulator_api_pb2 import ServerToSimulator
@@ -39,53 +40,59 @@ class _Runner(object):
 
     async def run(self):
         log.info("About to connect to %s", self.brain_api_url)
-        websocket = await websockets.connect(
-            self.brain_api_url,
-            extra_headers={
-                'Authorization': self.access_key
-            }
-        )
+        log.debug('URL %s will use access key %s...',
+                  self.brain_api_url, self.access_key)
+        async with websockets.connect(uri=self.brain_api_url,
+                                      extra_headers={
+                                          'Authorization': self.access_key
+                                      }) as websocket:
+            log.debug('Connection to %s established.', self.brain_api_url)
+            input_message = None
+            last_check = datetime.utcnow()
+            try:
+                log.debug('Starting execution loop...')
+                # The driver starts out in an unregistered... the first "next"
+                # will perform the registration and all subsequent "next"s will
+                # continue the operation.
+                while self.driver.state != DriverState.FINISHED:
+                    now = datetime.utcnow()
+                    if (now - last_check).total_seconds() > 10:
+                        last_check = now
+                        log.debug('Driver for %s currently in state %s...',
+                                  self.brain_api_url, str(self.driver.state))
 
-        input_message = None
+                    if self.recording_file:
+                        await self._record('RECV', input_message)
 
-        try:
-            # The driver starts out in an unregistered... the first "next"
-            # will perform the registration and all subsequent "next"s will
-            # continue the operation.
-            while self.driver.state != DriverState.FINISHED:
+                    # This is where the state-machine magic happens
+                    output_message = self.driver.next(input_message)
 
+                    if self.recording_file:
+                        await self._record('SEND', output_message)
+
+                    if output_message:
+                        output_bytes = output_message.SerializeToString()
+                        await websocket.send(output_bytes)
+
+                    if self.driver.state != DriverState.FINISHED:
+                        # Only do this part if the driver isn't in a FINISHED
+                        # state.
+                        input_bytes = await websocket.recv()
+                        if input_bytes:
+                            input_message = ServerToSimulator()
+                            input_message.ParseFromString(input_bytes)
+                        else:
+                            input_message = None
+
+            except websockets.exceptions.ConnectionClosed as e:
+                log.error(
+                    "Connection to '%s' is closed, code='%s', reason='%s'",
+                    self.brain_api_url, e.code, e.reason)
+            finally:
+                log.debug('Execution loop complete for %s!',
+                          self.brain_api_url)
                 if self.recording_file:
-                    await self._record('RECV', input_message)
-                output_message = self.driver.next(input_message)
-                if self.recording_file:
-                    await self._record('SEND', output_message)
-
-                # If the driver is FINSIHED, don't bother sending and
-                # receiving again before exiting the loop.
-                if self.driver.state != DriverState.FINISHED:
-
-                    if not output_message:
-                        raise RuntimeError(
-                            "Driver did not return a message to send.")
-
-                    output_bytes = output_message.SerializeToString()
-                    await websocket.send(output_bytes)
-
-                    input_bytes = await websocket.recv()
-                    if input_bytes:
-                        input_message = ServerToSimulator()
-                        input_message.ParseFromString(input_bytes)
-                    else:
-                        input_message = None
-
-        except websockets.exceptions.ConnectionClosed as e:
-            log.error(
-                "Connection to '%s' is closed, code='%s', reason='%s'",
-                self.brain_api_url, e.code, e.reason)
-        finally:
-            if self.recording_file:
-                await self.recording_queue.put(None)
-            await websocket.close()
+                    await self.recording_queue.put(None)
 
 
 def run(access_key, brain_api_url, driver, recording_file):

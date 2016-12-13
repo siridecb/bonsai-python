@@ -1,4 +1,5 @@
 import logging
+from pprint import pformat
 
 from google.protobuf.text_format import MessageToString
 
@@ -16,8 +17,9 @@ log = logging.getLogger(__name__)
 
 class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
     """
-    This is the protocol for communication between the simulator and generator
-    and the BRAIN server backend.
+    This is the "glue" class that connects a simulator conforming to Bonsai's
+    `Simulator` interface to the communication protocols used to pass messages
+    to and from the BRAIN backend.
     """
 
     def __init__(self, **kwargs):
@@ -103,6 +105,7 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
         else:
             reward = 0.0
 
+        log.debug('generate_state_message => state = %s', pformat(state))
         terminal = state.is_terminal
         state_message = self._output_schema()
         convert_state_to_proto(state_message, state.state)
@@ -159,6 +162,11 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
 
 
 class GeneratorConnection(BrainServerProtocol, BrainServerGeneratorProtocol):
+    """
+    This is the "glue" class that connects a generator conforming to Bonsai's
+    `Generator` interface to the communication protocols used to pass messages
+    to and from the BRAIN backend.
+    """
     # TODO: Impement me!
     def __init__(self, **kwargs):
         self._generator = kwargs.pop('generator')

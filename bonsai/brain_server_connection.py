@@ -1,7 +1,9 @@
 """
-This file contains the class BrainServerConnection, which exposes
-functionality intended to make it easy for clients to author simulators
-and generators that communicate with BRAIN backend.
+Thi file contains the client interfaces between simulators or generators and
+the BRAIN backend. It is designed to be relatively modular and compatible with
+both Python2 and Python3, using either Tornado or Asyncio (Python3 only) event
+loops. In addition, the modularity makes it fairly simple to use with a
+synchronous event loop or embed in some other type of client.
 """
 import argparse
 import logging
@@ -43,8 +45,8 @@ try:
     from bonsai import asyncio_event_loop
     _RUN_EVENT_LOOP['asyncio'] = asyncio_event_loop.run
     _CREATE_TASKS['asyncio'] = asyncio_event_loop.create_tasks
-except:
-    pass
+except Exception as e:
+    print('asyncio event loop not imported - %s' % str(e))
 
 
 _BaseArguments = namedtuple('BaseArguments', ['brain_url',
@@ -74,11 +76,11 @@ def parse_base_arguments():
         "The simulator can be run with or without the graphical environment."
         "By default the graphical environment is shown. Using --headless "
         "will run the simulator without graphical output.")
-    recording_file_help = {
+    recording_file_help = (
         "If specified, this should be a path to file where the simulator will "
         "record a stream of the messages transacted between the simulator and "
         "the BRAIN backend. If not specified, no recording is made."
-    }
+    )
 
     brain_group = parser.add_mutually_exclusive_group(required=True)
     brain_group.add_argument("--train-brain", help=train_brain_help)
@@ -121,11 +123,17 @@ def parse_base_arguments():
     return _BaseArguments(brain_url, args.headless, args.messages_out)
 
 
-def _create_driver(name, simulator_or_generator, brain_api_url):
+def _create_driver(name, simulator_or_generator, brain_api_url,
+                   simulator_connection_class,
+                   generator_connection_class,
+                   connection_class_kwargs):
     is_for_training = brain_api_url.endswith('/sims/ws')
+    connection_class_kwargs = connection_class_kwargs or {}
     if isinstance(simulator_or_generator, Simulator):
-        connection = SimulatorConnection(simulator_name=name,
-                                         simulator=simulator_or_generator)
+        connection = simulator_connection_class(
+            simulator_name=name,
+            simulator=simulator_or_generator,
+            **connection_class_kwargs)
         if is_for_training:
             return SimulatorDriverForTraining(
                 connection=connection, simulator_connection=connection)
@@ -133,8 +141,10 @@ def _create_driver(name, simulator_or_generator, brain_api_url):
             return SimulatorDriverForPrediction(
                 connection=connection, simulator_connection=connection)
     elif isinstance(simulator_or_generator, Generator):
-        connection = GeneratorConnection(generator_name=name,
-                                         generator=simulator_or_generator)
+        connection = generator_connection_class(
+            generator_name=name,
+            generator=simulator_or_generator,
+            **connection_class_kwargs)
         if is_for_training:
             return GeneratorDriverForTraining(
                 connection=connection, generator_connection=connection)
@@ -147,11 +157,39 @@ def _create_driver(name, simulator_or_generator, brain_api_url):
         raise RuntimeError(error)
 
 
+_RuntimeConfig = namedtuple('RuntimeConfig', [
+    'access_key',
+    'event_loop',
+    'recording_file',
+    'simulator_connection_class',
+    'generator_connection_class',
+    'connection_class_kwargs'
+])
+
+
+def _get_runtime_config(**kwargs):
+    access_key = kwargs.pop('access_key', BonsaiConfig().access_key())
+    event_loop = kwargs.pop('event_loop', 'tornado')
+    recording_file = kwargs.pop('recording_file', None)
+    simulator_connection_class = kwargs.pop('simulator_connection_class',
+                                            SimulatorConnection)
+    generator_connection_class = kwargs.pop('generator_connection_class',
+                                            GeneratorConnection)
+    connection_class_kwargs = kwargs.pop('connection_class_kwargs', None)
+    return _RuntimeConfig(
+        access_key=access_key,
+        event_loop=event_loop,
+        recording_file=recording_file,
+        simulator_connection_class=simulator_connection_class,
+        generator_connection_class=generator_connection_class,
+        connection_class_kwargs=connection_class_kwargs
+    )
+
+
 def create_async_tasks(name,
                        simulator_or_generator,
                        brain_url,
-                       event_loop='tornado',
-                       recording_file=None):
+                       **kwargs):
     """
     Creates tasks for a simulator or generator against the BRAIN server at the
     provided brain url.
@@ -159,37 +197,54 @@ def create_async_tasks(name,
     :param simulator_or_generator: Instance of the simulator or generator.
     :param brain_url: URL for reaching the backend BRAIN training or prediction
                       components.
-    :param event_loop: Specifies which event loop to use to drive the simulator
-                       or generator. May be one of the following: ['tornado',
-                       'asyncio']. Choose 'tornado' if you are running Python
-                       2.7 or Python 3.4 and below. Defaults to 'tornado'.
-    :param recording_file: If defined, records a text file detailing all the
-                           messages communicated among the simulator/generator
-                           and the BRAIN backend to the path specified. This is
-                           useful for mock tests and playbacks. Defaults to
-                           None.
+    :param kwargs: Additional optional keyword arguments. Valid arguments
+                   include:
+                   - event_loop = Specifies which event loop to use to drive
+                                  the simulator or generator. May be one of the
+                                  following: ['tornado', 'asyncio']. Choose
+                                  'tornado' if you are running Python 2.7 or
+                                  Python 3.4 and below. Defaults to 'tornado'.
+                   - recording_file = If defined, records a text file detailing
+                                      all the messages communicated among the
+                                      simulator/generator and the BRAIN backend
+                                      to the path specified. This is useful for
+                                      mock tests and playbacks. Defaults to
+                                      None.
+                   - simulator_connection_class = Class to be used for hooking
+                                                  into the simulator. Defaults
+                                                  to SimulatorConnection.
+                   - generator_connection_class = Class to be used for hooking
+                                                  into the generator. Defaults
+                                                  to GeneratorConnection.
+                   - connection_class_kwargs = Dictionary of parameters to be
+                                               passed to the simulator or
+                                               generator connection class at
+                                               construction. Defaults to None.
+                   - access_key = Overrides the access key provided by
+                                  BonsaiConfig
     """
-    driver = _create_driver(name, simulator_or_generator, brain_url)
-    access_key = BonsaiConfig().access_key()
+    rcfg = _get_runtime_config(**kwargs)
+    driver = _create_driver(name, simulator_or_generator, brain_url,
+                            rcfg.simulator_connection_class,
+                            rcfg.generator_connection_class,
+                            rcfg.connection_class_kwargs)
 
     try:
-        tasks = _CREATE_TASKS[event_loop](access_key,
-                                          brain_url,
-                                          driver,
-                                          recording_file)
-        return tasks
+        tasks_function = _CREATE_TASKS[rcfg.event_loop]
     except KeyError:
         raise ValueError('Invalid event loop {} provided; only supported '
-                         'event loops are {}'.format(event_loop,
+                         'event loops are {}'.format(rcfg.event_loop,
                                                      str(_CREATE_TASKS.keys())
                                                      ))
+    tasks = tasks_function(rcfg.access_key, brain_url,
+                           driver, rcfg.recording_file)
+    return tasks
 
 
 def run_with_url(name,
                  simulator_or_generator,
                  brain_url,
-                 event_loop='tornado',
-                 recording_file=None):
+                 **kwargs):
     """
     Runs a simulator or generator against the BRAIN server at the provided
     brain url.
@@ -197,35 +252,53 @@ def run_with_url(name,
     :param simulator_or_generator: Instance of the simulator or generator.
     :param brain_url: URL for reaching the backend BRAIN training or prediction
                       components.
-    :param event_loop: Specifies which event loop to use to drive the simulator
-                       or generator. May be one of the following: ['tornado',
-                       'asyncio']. Choose 'tornado' if you are running Python
-                       2.7 or Python 3.4 and below. Defaults to 'tornado'.
-    :param recording_file: If defined, records a text file detailing all the
-                           messages communicated among the simulator/generator
-                           and the BRAIN backend to the path specified. This is
-                           useful for mock tests and playbacks. Defaults to
-                           None.
+    :param kwargs: Additional optional keyword arguments. Valid arguments
+                   include:
+                   - event_loop = Specifies which event loop to use to drive
+                                  the simulator or generator. May be one of the
+                                  following: ['tornado', 'asyncio']. Choose
+                                  'tornado' if you are running Python 2.7 or
+                                  Python 3.4 and below. Defaults to 'tornado'.
+                   - recording_file = If defined, records a text file detailing
+                                      all the messages communicated among the
+                                      simulator/generator and the BRAIN backend
+                                      to the path specified. This is useful for
+                                      mock tests and playbacks. Defaults to
+                                      None.
+                   - simulator_connection_class = Class to be used for hooking
+                                                  into the simulator. Defaults
+                                                  to SimulatorConnection.
+                   - generator_connection_class = Class to be used for hooking
+                                                  into the generator. Defaults
+                                                  to GeneratorConnection.
+                   - connection_class_kwargs = Dictionary of parameters to be
+                                               passed to the simulator or
+                                               generator connection class at
+                                               construction. Defaults to None.
+                   - access_key = Overrides the access key provided by
+                                  BonsaiConfig
     """
 
-    driver = _create_driver(name, simulator_or_generator, brain_url)
-    access_key = BonsaiConfig().access_key()
+    rcfg = _get_runtime_config(**kwargs)
+    driver = _create_driver(name, simulator_or_generator, brain_url,
+                            rcfg.simulator_connection_class,
+                            rcfg.generator_connection_class,
+                            rcfg.connection_class_kwargs)
 
     try:
-        _RUN_EVENT_LOOP[event_loop](access_key,
-                                    brain_url,
-                                    driver,
-                                    recording_file)
+        event_loop_func = _RUN_EVENT_LOOP[rcfg.event_loop]
     except KeyError:
         raise ValueError('Invalid event loop {} provided; only supported '
                          'event loops '
-                         'are {}'.format(event_loop,
+                         'are {}'.format(rcfg.event_loop,
                                          str(_RUN_EVENT_LOOP.keys())))
+
+    event_loop_func(rcfg.access_key, brain_url, driver, rcfg.recording_file)
 
 
 def run_for_training_or_prediction(name,
                                    simulator_or_generator,
-                                   event_loop='tornado'):
+                                   **kwargs):
     """
     Helper function for client implemented simulators that exposes the
     appropriate command line arguments necessary for running a
@@ -234,20 +307,29 @@ def run_for_training_or_prediction(name,
     :param simulator_or_generator: Instance of the simulator or generator.
     :param brain_url: URL for reaching the backend BRAIN training or prediction
                       components.
-    :param event_loop: Specifies which event loop to use to drive the simulator
-                       or generator. May be one of the following: ['tornado',
-                       'asyncio']. Choose 'tornado' if you are running Python
-                       2.7 or Python 3.4 and below. Defaults to 'tornado'.
-    :param recording_file: If defined, records a text file detailing all the
-                           messages communicated among the simulator/generator
-                           and the BRAIN backend to the path specified. This is
-                           useful for mock tests and playbacks. Defaults to
-                           None.
+    :param kwargs: Additional optional keyword arguments. Valid arguments
+                   include:
+                   - event_loop = Specifies which event loop to use to drive
+                                  the simulator or generator. May be one of the
+                                  following: ['tornado', 'asyncio']. Choose
+                                  'tornado' if you are running Python 2.7 or
+                                  Python 3.4 and below. Defaults to 'tornado'.
+                   - recording_file = If defined, records a text file detailing
+                                      all the messages communicated among the
+                                      simulator/generator and the BRAIN backend
+                                      to the path specified. This is useful for
+                                      mock tests and playbacks. Defaults to
+                                      None.
+                   - simulator_connection_class = Class to be used for hooking
+                                                  into the simulator. Defaults
+                                                  to SimulatorConnection.
+                   - generator_connection_class = Class to be used for hooking
+                                                  into the generator. Defaults
+                                                  to GeneratorConnection.
     """
     base_arguments = parse_base_arguments()
     if base_arguments:
         run_with_url(name,
                      simulator_or_generator,
                      base_arguments.brain_url,
-                     event_loop,
-                     base_arguments.recording_file)
+                     **kwargs)
