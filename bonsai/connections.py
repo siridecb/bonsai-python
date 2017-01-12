@@ -5,9 +5,7 @@ from google.protobuf.text_format import MessageToString
 
 from bonsai.protocols import BrainServerProtocol, BrainServerSimulatorProtocol
 from bonsai.protocols import BrainServerGeneratorProtocol
-from bonsai.proto.generator_simulator_api_pb2 import ServerToSimulator
 from bonsai.proto.generator_simulator_api_pb2 import SimulatorToServer
-from bonsai.proto.generator_simulator_api_pb2 import SimulationSourceData
 from bonsai.common.message_builder import MessageBuilder
 from bonsai.common.state_to_proto import convert_state_to_proto
 

@@ -7,6 +7,7 @@ synchronous event loop or embed in some other type of client.
 """
 import argparse
 import logging
+import os
 from collections import namedtuple
 
 from bonsai_config import BonsaiConfig
@@ -49,78 +50,114 @@ except Exception as e:
     print('asyncio event loop not imported - %s' % str(e))
 
 
-_BaseArguments = namedtuple('BaseArguments', ['brain_url',
-                                              'headless',
-                                              'recording_file'])
+def _read_bonsai_config():
+    """ Helper function to read the information that brain server
+    connection needs from BonsaiConfig.
+    """
+    config = BonsaiConfig()
+    return (
+      config.access_key(), config.brain_websocket_url(), config.username())
 
 
-def parse_base_arguments():
+def _env(key):
+    return os.environ.get(key, None)
+
+
+def parse_base_arguments(argv=None):
     parser = argparse.ArgumentParser(
         description="Command line interface for running a simulator")
 
-    train_brain_help = "The name of the BRAIN to connect to for training."
+    train_brain_help = (
+        "The name of the BRAIN to connect to for training.  "
+        "This may be set as BONSAI_TRAIN_BRAIN in the environment.")
     predict_brain_help = (
         "The name of the BRAIN to connect to for predictions. If you "
-        "use this flag, you must also specify the --predict-version flag.")
+        "use this flag, you must also specify the --predict-version flag. "
+        "This may be set as BONSAI_PREDICT_BRAIN in the environment.")
     predict_version_help = (
         "The version of the BRAIN to connect to for predictions. This flag "
         "must be specified when --predict-brain is used. This flag will "
         "be ignored if it is specified along with --train-brain or "
-        "--brain-url.")
+        "--brain-url. "
+        "This may be set as BONSAI_PREDICT_VERSION in the environment.")
     brain_url_help = (
         "The full URL of the BRAIN to connect to. The URL should be of "
         "the form ws://api.bons.ai/v1/<username>/<brainname>/sims/ws "
         "when training, and of the form ws://api.bons.ai/v1/"
-        "<username>/<brainname>/<version>/predictions/ws when predicting.")
+        "<username>/<brainname>/<version>/predictions/ws when predicting. "
+        "This may be set as BONSAI_BRAIN_URL in the environment.")
     headless_help = (
         "The simulator can be run with or without the graphical environment."
         "By default the graphical environment is shown. Using --headless "
-        "will run the simulator without graphical output.")
+        "will run the simulator without graphical output. "
+        "This may be set as BONSAI_HEADLESS in the environment.")
     recording_file_help = (
         "If specified, this should be a path to file where the simulator will "
         "record a stream of the messages transacted between the simulator and "
-        "the BRAIN backend. If not specified, no recording is made."
-    )
+        "the BRAIN backend. If not specified, no recording is made.")
+    access_key_help = (
+        "The access key to use when connecting to the BRAIN server. If "
+        "specified, it will be used instead of any access key information "
+        "stored in a bonsai config file. "
+        "This may be set as BONSAI_ACCESS_KEY in the environment.")
 
-    brain_group = parser.add_mutually_exclusive_group(required=True)
-    brain_group.add_argument("--train-brain", help=train_brain_help)
-    brain_group.add_argument("--predict-brain", help=predict_brain_help)
-    brain_group.add_argument("--brain-url", help=brain_url_help)
-    parser.add_argument("--predict-version", help=predict_version_help)
-    parser.add_argument("--headless", help=headless_help, action="store_true")
-    parser.add_argument("--messages-out", help=recording_file_help,
+    brain_group = parser.add_mutually_exclusive_group(required=False)
+    brain_group.add_argument("--train-brain", help=train_brain_help,
+                             default=_env('BONSAI_TRAIN_BRAIN'))
+    brain_group.add_argument("--predict-brain", help=predict_brain_help,
+                             default=_env('BONSAI_PREDICT_BRAIN'))
+    brain_group.add_argument("--brain-url", help=brain_url_help,
+                             default=_env('BONSAI_BRAIN_URL'))
+    parser.add_argument("--predict-version", help=predict_version_help,
+                        default=_env('BONSAI_PREDICT_VERSION'))
+    parser.add_argument("--headless", help=headless_help, action="store_true",
+                        default=_env('BONSAI_HEADLESS'))
+    parser.add_argument("--recording-file", help=recording_file_help,
                         default=None)
+    parser.add_argument("--access-key", help=access_key_help,
+                        default=_env('BONSAI_ACCESS_KEY'))
 
-    args, unknown = parser.parse_known_args()
+    args, unknown = parser.parse_known_args(argv)
 
-    config = BonsaiConfig()
-    partial_url = "{base}/v1/{user}".format(
-            base=config.brain_websocket_url(),
-            user=config.username())
+    # Read some information from the bonsai config
+    access_key, base_url, username = _read_bonsai_config()
 
-    # If the --brain_url flag was specified, use its value literally
-    # for connecting to the BRAIN server. Otherwise, compose the url
-    # to connect to from the other possible flags.
-    if args.brain_url:
-        brain_url = args.brain_url
-    elif args.train_brain:
-        brain_url = "{base}/{brain}/sims/ws".format(
+    # If the access key was not specified on the command line, read
+    # it from bonsai config.
+    if not args.access_key:
+        args.access_key = access_key
+
+    # Mutual exclusion check. ArgumentParser does not know if multiple
+    # environment variables are set.
+    number_set = 0
+    for key in ['brain_url', 'train_brain', 'predict_brain']:
+        if getattr(args, key):
+            number_set = number_set + 1
+
+    if number_set > 1:
+        parser.error("At most one of --train-brain, --predict-brain, "
+                     "or --brain-url (or similar environment variable) "
+                     "is allowed.")
+    elif number_set == 0:
+        parser.error("At least one of --train-brain, --predict-brain, "
+                     "or --brain-url is required.")
+
+    # When the --train-brain or --predict-brain flags are specified,
+    # we must compose brain_url ourselves.
+    partial_url = "{base}/v1/{user}".format(base=base_url, user=username)
+    if args.train_brain:
+        args.brain_url = "{base}/{brain}/sims/ws".format(
             base=partial_url, brain=args.train_brain)
     elif args.predict_brain:
         if not args.predict_version:
-            log.error("Flag --predict-version must be specified when flag "
-                      "--predict-brain is used.")
-            return
-        brain_url = "{base}/{brain}/{version}/predictions/ws".format(
+            parser.error("Flag --predict-version must be specified when flag "
+                         "--predict-brain is used.")
+        args.brain_url = "{base}/{brain}/{version}/predictions/ws".format(
             base=partial_url,
             brain=args.predict_brain,
             version=args.predict_version)
-    else:
-        log.error("One of --brain-url, --predict-brain or --train-brain "
-                  "must be specified.")
-        return
 
-    return _BaseArguments(brain_url, args.headless, args.messages_out)
+    return args
 
 
 def _create_driver(name, simulator_or_generator, brain_api_url,
@@ -158,7 +195,6 @@ def _create_driver(name, simulator_or_generator, brain_api_url,
 
 
 _RuntimeConfig = namedtuple('RuntimeConfig', [
-    'access_key',
     'event_loop',
     'recording_file',
     'simulator_connection_class',
@@ -168,7 +204,6 @@ _RuntimeConfig = namedtuple('RuntimeConfig', [
 
 
 def _get_runtime_config(**kwargs):
-    access_key = kwargs.pop('access_key', BonsaiConfig().access_key())
     event_loop = kwargs.pop('event_loop', 'tornado')
     recording_file = kwargs.pop('recording_file', None)
     simulator_connection_class = kwargs.pop('simulator_connection_class',
@@ -177,7 +212,6 @@ def _get_runtime_config(**kwargs):
                                             GeneratorConnection)
     connection_class_kwargs = kwargs.pop('connection_class_kwargs', None)
     return _RuntimeConfig(
-        access_key=access_key,
         event_loop=event_loop,
         recording_file=recording_file,
         simulator_connection_class=simulator_connection_class,
@@ -189,6 +223,7 @@ def _get_runtime_config(**kwargs):
 def create_async_tasks(name,
                        simulator_or_generator,
                        brain_url,
+                       access_key,
                        **kwargs):
     """
     Creates tasks for a simulator or generator against the BRAIN server at the
@@ -197,6 +232,7 @@ def create_async_tasks(name,
     :param simulator_or_generator: Instance of the simulator or generator.
     :param brain_url: URL for reaching the backend BRAIN training or prediction
                       components.
+    :param access_key: The access key to use when connecting to BRAIN backend.
     :param kwargs: Additional optional keyword arguments. Valid arguments
                    include:
                    - event_loop = Specifies which event loop to use to drive
@@ -220,8 +256,6 @@ def create_async_tasks(name,
                                                passed to the simulator or
                                                generator connection class at
                                                construction. Defaults to None.
-                   - access_key = Overrides the access key provided by
-                                  BonsaiConfig
     """
     rcfg = _get_runtime_config(**kwargs)
     driver = _create_driver(name, simulator_or_generator, brain_url,
@@ -236,14 +270,14 @@ def create_async_tasks(name,
                          'event loops are {}'.format(rcfg.event_loop,
                                                      str(_CREATE_TASKS.keys())
                                                      ))
-    tasks = tasks_function(rcfg.access_key, brain_url,
-                           driver, rcfg.recording_file)
-    return tasks
+
+    return tasks_function(access_key, brain_url, driver, rcfg.recording_file)
 
 
 def run_with_url(name,
                  simulator_or_generator,
                  brain_url,
+                 access_key,
                  **kwargs):
     """
     Runs a simulator or generator against the BRAIN server at the provided
@@ -252,6 +286,7 @@ def run_with_url(name,
     :param simulator_or_generator: Instance of the simulator or generator.
     :param brain_url: URL for reaching the backend BRAIN training or prediction
                       components.
+    :param access_key: The access key to use when connecting to BRAIN backend.
     :param kwargs: Additional optional keyword arguments. Valid arguments
                    include:
                    - event_loop = Specifies which event loop to use to drive
@@ -275,8 +310,6 @@ def run_with_url(name,
                                                passed to the simulator or
                                                generator connection class at
                                                construction. Defaults to None.
-                   - access_key = Overrides the access key provided by
-                                  BonsaiConfig
     """
 
     rcfg = _get_runtime_config(**kwargs)
@@ -293,7 +326,7 @@ def run_with_url(name,
                          'are {}'.format(rcfg.event_loop,
                                          str(_RUN_EVENT_LOOP.keys())))
 
-    event_loop_func(rcfg.access_key, brain_url, driver, rcfg.recording_file)
+    event_loop_func(access_key, brain_url, driver, rcfg.recording_file)
 
 
 def run_for_training_or_prediction(name,
@@ -305,8 +338,6 @@ def run_for_training_or_prediction(name,
     simulator with BrainServerConnection for training or prediction.
     :param name: The name to assign to the simulator or generator.
     :param simulator_or_generator: Instance of the simulator or generator.
-    :param brain_url: URL for reaching the backend BRAIN training or prediction
-                      components.
     :param kwargs: Additional optional keyword arguments. Valid arguments
                    include:
                    - event_loop = Specifies which event loop to use to drive
@@ -332,4 +363,5 @@ def run_for_training_or_prediction(name,
         run_with_url(name,
                      simulator_or_generator,
                      base_arguments.brain_url,
+                     base_arguments.access_key,
                      **kwargs)

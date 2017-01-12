@@ -1,6 +1,3 @@
-from bonsai.proto.generator_simulator_api_pb2 import SimulatorToServer
-from bonsai.proto.generator_simulator_api_pb2 import ServerToSimulator
-
 
 class BrainServerProtocol(object):
     """

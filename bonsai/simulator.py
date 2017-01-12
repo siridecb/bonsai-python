@@ -17,7 +17,7 @@ class Simulator(object):
 
     Simulators must implement get_state() and advance()
 
-    Simulators must also add methods who's names correspond to the
+    Simulators must also add methods whose names correspond to the
     objectives declared in inkling.
     Note: This Simulator class assumes synchronous action-state transitions.
     This means that the action takes place before the next state is sent. If
