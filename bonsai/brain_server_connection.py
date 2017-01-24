@@ -125,6 +125,9 @@ def parse_base_arguments(argv=None):
     # If the access key was not specified on the command line, read
     # it from bonsai config.
     if not args.access_key:
+        if not access_key:
+            parser.error("Access key is required.  It may be specified by"
+                         " --access-key or by running bonsai configure.")
         args.access_key = access_key
 
     # Mutual exclusion check. ArgumentParser does not know if multiple

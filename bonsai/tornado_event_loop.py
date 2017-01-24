@@ -73,7 +73,11 @@ class _Runner(object):
 
     @gen.coroutine
     def run(self):
+        if not self.access_key:
+            raise RuntimeError("Access Key was not set.")
+
         log.info("About to connect to %s", self.brain_api_url)
+
         req = HTTPRequest(self.brain_api_url, connect_timeout=60,
                           request_timeout=60)
         req.headers['Authorization'] = self.access_key

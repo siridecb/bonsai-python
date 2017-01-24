@@ -29,12 +29,16 @@ def hide_stderr():
 
 
 class BrainServerConnectionTests(TestCase):
+    def _default_args(self):
+        return ['--access-key', 'test-key']
+
     def test_brain_url_passed_literally(self):
         """This tests verifies that a url passed using the flag --brain-url
         is returned unmodified.
         """
         brain_url = "ws://some_url_here"
         argv = ["--brain-url", brain_url]
+        argv.extend(self._default_args())
         base_args = parse_base_arguments(argv)
         self.assertEqual(brain_url, base_args.brain_url)
         self.assertFalse(base_args.headless)
@@ -73,6 +77,7 @@ class BrainServerConnectionTests(TestCase):
         flag is passed without the predict version flag.
         """
         argv = ["--predict-brain", "cartpole"]
+        argv.extend(self._default_args())
         # Argument parsing errors end up on stderr, which makes unit test
         # output messy, so hide it here.
         with hide_stderr():
@@ -91,9 +96,21 @@ class BrainServerConnectionTests(TestCase):
 
         self.assertEqual("cmd_line_key", base_args.access_key)
 
+    @patch("bonsai.brain_server_connection._read_bonsai_config")
+    def test_access_key_missing(self, mock_read):
+        """If no access key is provided, the command returns an error.
+        """
+        mock_read.return_value = (None, None, None)
+
+        argv = ["--train-brain", "cartpole"]
+        with hide_stderr():
+            with self.assertRaises(SystemExit):
+                base_args = parse_base_arguments(argv)
+
     def test_env_url(self):
         """ A brain-url specified by an environment variable is used """
         argv = []
+        argv.extend(self._default_args())
         with patch.dict('os.environ', {'BONSAI_BRAIN_URL': 'ws://test/v1/'}):
             base_args = parse_base_arguments(argv)
 
@@ -102,6 +119,7 @@ class BrainServerConnectionTests(TestCase):
     def test_env_override(self):
         """Command line arguments override environment variables """
         argv = ['--brain-url', 'ws://cmdline/v1/brain']
+        argv.extend(self._default_args())
         with patch.dict('os.environ', {'BONSAI_BRAIN_URL': 'ws://test/v1/'}):
             base_args = parse_base_arguments(argv)
 
@@ -110,6 +128,7 @@ class BrainServerConnectionTests(TestCase):
     def test_env_exclusive(self):
         """ Command arguments and env variables are mutually exclusive """
         argv = ['--predict-brain', 'life_of_brian']
+        argv.extend(self._default_args())
         with patch.dict('os.environ', {'BONSAI_BRAIN_URL': 'ws://test/v1/'}):
             with hide_stderr():
                 with self.assertRaises(SystemExit):

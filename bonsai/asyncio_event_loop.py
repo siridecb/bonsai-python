@@ -39,9 +39,10 @@ class _Runner(object):
             await self.recording_queue.put('None')
 
     async def run(self):
+        if not self.access_key:
+            raise RuntimeError("Access Key was not set.")
+
         log.info("About to connect to %s", self.brain_api_url)
-        log.debug('URL %s will use access key %s...',
-                  self.brain_api_url, self.access_key)
         async with websockets.connect(uri=self.brain_api_url,
                                       extra_headers={
                                           'Authorization': self.access_key
