@@ -65,7 +65,8 @@ def _env(key):
 
 def parse_base_arguments(argv=None):
     parser = argparse.ArgumentParser(
-        description="Command line interface for running a simulator")
+        description="Command line interface for running a simulator "
+                    "(brain_server_connection options)")
 
     train_brain_help = (
         "The name of the BRAIN to connect to for training.  "
@@ -86,11 +87,6 @@ def parse_base_arguments(argv=None):
         "when training, and of the form ws://api.bons.ai/v1/"
         "<username>/<brainname>/<version>/predictions/ws when predicting. "
         "This may be set as BONSAI_BRAIN_URL in the environment.")
-    headless_help = (
-        "The simulator can be run with or without the graphical environment."
-        "By default the graphical environment is shown. Using --headless "
-        "will run the simulator without graphical output. "
-        "This may be set as BONSAI_HEADLESS in the environment.")
     recording_file_help = (
         "If specified, this should be a path to file where the simulator will "
         "record a stream of the messages transacted between the simulator and "
@@ -110,8 +106,6 @@ def parse_base_arguments(argv=None):
                              default=_env('BONSAI_BRAIN_URL'))
     parser.add_argument("--predict-version", help=predict_version_help,
                         default=_env('BONSAI_PREDICT_VERSION'))
-    parser.add_argument("--headless", help=headless_help, action="store_true",
-                        default=_env('BONSAI_HEADLESS'))
     parser.add_argument("--recording-file", help=recording_file_help,
                         default=None)
     parser.add_argument("--access-key", help=access_key_help,
@@ -277,61 +271,6 @@ def create_async_tasks(name,
     return tasks_function(access_key, brain_url, driver, rcfg.recording_file)
 
 
-def run_with_url(name,
-                 simulator_or_generator,
-                 brain_url,
-                 access_key,
-                 **kwargs):
-    """
-    Runs a simulator or generator against the BRAIN server at the provided
-    brain url.
-    :param name: The name to assign to the simulator or generator.
-    :param simulator_or_generator: Instance of the simulator or generator.
-    :param brain_url: URL for reaching the backend BRAIN training or prediction
-                      components.
-    :param access_key: The access key to use when connecting to BRAIN backend.
-    :param kwargs: Additional optional keyword arguments. Valid arguments
-                   include:
-                   - event_loop = Specifies which event loop to use to drive
-                                  the simulator or generator. May be one of the
-                                  following: ['tornado', 'asyncio']. Choose
-                                  'tornado' if you are running Python 2.7 or
-                                  Python 3.4 and below. Defaults to 'tornado'.
-                   - recording_file = If defined, records a text file detailing
-                                      all the messages communicated among the
-                                      simulator/generator and the BRAIN backend
-                                      to the path specified. This is useful for
-                                      mock tests and playbacks. Defaults to
-                                      None.
-                   - simulator_connection_class = Class to be used for hooking
-                                                  into the simulator. Defaults
-                                                  to SimulatorConnection.
-                   - generator_connection_class = Class to be used for hooking
-                                                  into the generator. Defaults
-                                                  to GeneratorConnection.
-                   - connection_class_kwargs = Dictionary of parameters to be
-                                               passed to the simulator or
-                                               generator connection class at
-                                               construction. Defaults to None.
-    """
-
-    rcfg = _get_runtime_config(**kwargs)
-    driver = _create_driver(name, simulator_or_generator, brain_url,
-                            rcfg.simulator_connection_class,
-                            rcfg.generator_connection_class,
-                            rcfg.connection_class_kwargs)
-
-    try:
-        event_loop_func = _RUN_EVENT_LOOP[rcfg.event_loop]
-    except KeyError:
-        raise ValueError('Invalid event loop {} provided; only supported '
-                         'event loops '
-                         'are {}'.format(rcfg.event_loop,
-                                         str(_RUN_EVENT_LOOP.keys())))
-
-    event_loop_func(access_key, brain_url, driver, rcfg.recording_file)
-
-
 def run_for_training_or_prediction(name,
                                    simulator_or_generator,
                                    **kwargs):
@@ -363,8 +302,20 @@ def run_for_training_or_prediction(name,
     """
     base_arguments = parse_base_arguments()
     if base_arguments:
-        run_with_url(name,
-                     simulator_or_generator,
-                     base_arguments.brain_url,
-                     base_arguments.access_key,
-                     **kwargs)
+        rcfg = _get_runtime_config(**kwargs)
+        driver = _create_driver(name, simulator_or_generator,
+                                base_arguments.brain_url,
+                                rcfg.simulator_connection_class,
+                                rcfg.generator_connection_class,
+                                rcfg.connection_class_kwargs)
+
+        try:
+            event_loop_func = _RUN_EVENT_LOOP[rcfg.event_loop]
+        except KeyError:
+            raise ValueError('Invalid event loop {} provided; only supported '
+                             'event loops '
+                             'are {}'.format(rcfg.event_loop,
+                                             str(_RUN_EVENT_LOOP.keys())))
+
+        event_loop_func(base_arguments.access_key, base_arguments.brain_url,
+                        driver, rcfg.recording_file)

@@ -6,7 +6,7 @@ from google.protobuf.text_format import MessageToString
 from bonsai.protocols import BrainServerProtocol, BrainServerSimulatorProtocol
 from bonsai.protocols import BrainServerGeneratorProtocol
 from bonsai.proto.generator_simulator_api_pb2 import SimulatorToServer
-from bonsai.common.message_builder import MessageBuilder
+from bonsai.common.message_builder import reconstitute
 from bonsai.common.state_to_proto import convert_state_to_proto
 
 
@@ -61,11 +61,9 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
         props_schema = message.properties_schema
         out_schema = message.output_schema
         pred_schema = message.prediction_schema
-        self._properties_schema = MessageBuilder().reconstitute(
-            props_schema)
-        self._output_schema = MessageBuilder().reconstitute(out_schema)
-        self._prediction_schema = MessageBuilder().reconstitute(
-            pred_schema)
+        self._properties_schema = reconstitute(props_schema)
+        self._output_schema = reconstitute(out_schema)
+        self._prediction_schema = reconstitute(pred_schema)
 
     def handle_set_properties_message(self, message):
 
@@ -90,8 +88,7 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
         self._current_reward_name = property_data.reward_name
 
         # Set the predictions schema
-        self._prediction_schema = MessageBuilder().reconstitute(
-            property_data.prediction_schema)
+        self._prediction_schema = reconstitute(property_data.prediction_schema)
 
     def generate_state_message(self, message):
 
@@ -133,11 +130,10 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
         log.debug('Received prediction message %s',
                   MessageToString(message))
 
-        prediction_data = message
+        prediction_data = message.dynamic_prediction
         # Parse request_data into a properties message.
         predictions_msg = self._prediction_schema()
-        predictions_msg.ParseFromString(
-            prediction_data.dynamic_prediction)
+        predictions_msg.ParseFromString(prediction_data)
 
         # Create a dictionary of the property names to values.
         predictions = {}

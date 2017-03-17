@@ -41,7 +41,6 @@ class BrainServerConnectionTests(TestCase):
         argv.extend(self._default_args())
         base_args = parse_base_arguments(argv)
         self.assertEqual(brain_url, base_args.brain_url)
-        self.assertFalse(base_args.headless)
         self.assertIsNone(base_args.recording_file)
 
     @patch("bonsai.brain_server_connection._read_bonsai_config")
