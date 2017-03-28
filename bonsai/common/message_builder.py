@@ -8,8 +8,8 @@ from google.protobuf.message_factory import MessageFactory
 
 from bonsai.proto import inkling_types_pb2
 
-
 PACKAGE = "bonsai.proto"
+descriptor_cache = {}
 
 
 def reconstitute(descriptor_proto):
@@ -25,6 +25,16 @@ def reconstitute(descriptor_proto):
     is created, we go back and associates the appropriate structure
     with those fields.
     """
+    global _descriptor_cache
+    proto_bytes = descriptor_proto.SerializeToString()
+
+    if proto_bytes not in descriptor_cache:
+        prototype = _reconstitute_proto(descriptor_proto)
+        descriptor_cache[proto_bytes] = prototype
+    return descriptor_cache[proto_bytes]
+
+
+def _reconstitute_proto(descriptor_proto):
     # Add our custom inkling types into the message factory pool so
     # they are available to the message factory.
     inkling_file_descriptor = FileDescriptorProto()
