@@ -51,6 +51,9 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
         # The current reward name
         self._current_reward_name = None
 
+        # the server-allocated ID for the current simulator session
+        self._simulator_id = None
+
     def generate_register_message(self, message):
         message.message_type = SimulatorToServer.REGISTER
         message.register_data.simulator_name = self._simulator_name
@@ -64,6 +67,7 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
         self._properties_schema = reconstitute(props_schema)
         self._output_schema = reconstitute(out_schema)
         self._prediction_schema = reconstitute(pred_schema)
+        self._simulator_id = message.sim_id
 
     def handle_set_properties_message(self, message):
 
@@ -93,6 +97,7 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
     def generate_state_message(self, message):
 
         message.message_type = SimulatorToServer.STATE
+        message.sim_id = self._simulator_id
         state = self._simulator.get_state()
 
         if self._current_reward_name:
@@ -153,6 +158,7 @@ class SimulatorConnection(BrainServerProtocol, BrainServerSimulatorProtocol):
 
     def generate_ready_message(self, message):
         message.message_type = SimulatorToServer.READY
+        message.sim_id = self._simulator_id
 
 
 class GeneratorConnection(BrainServerProtocol, BrainServerGeneratorProtocol):
