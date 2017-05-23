@@ -11,7 +11,7 @@ from bonsai.proto.generator_simulator_api_pb2 import ServerToSimulator
 from bonsai.proto.generator_simulator_api_pb2 import SimulatorToServer
 
 
-TestMessage = namedtuple('TestMessage', [
+SampleMessage = namedtuple('SampleMessage', [
     'direction',
     'message_as_text',
     'message'
@@ -36,7 +36,7 @@ def load_test_message_stream(path):
 
     :param path: Path to test file to load.
     :type path: string
-    :return: Array of TestMessage instances representing the back-and-forth
+    :return: Array of SampleMessage instances representing the back-and-forth
              communications between the simulator and its BRAIN.
     """
     with open(path, 'r') as infile:
@@ -64,7 +64,7 @@ def load_test_message_stream(path):
                                        'on line {}'.format(line_number))
                 if message:
                     Merge(message_as_text, message)
-                tst_msg = TestMessage(
+                tst_msg = SampleMessage(
                     direction=direction,
                     message_as_text=message_as_text,
                     message=message)
