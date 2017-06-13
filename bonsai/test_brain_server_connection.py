@@ -5,9 +5,11 @@ import os
 import sys
 from contextlib import contextmanager
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import ANY, Mock, patch
 
+from bonsai.simulator import Simulator
 from bonsai.brain_server_connection import parse_base_arguments
+from bonsai.brain_server_connection import run_for_training_or_prediction
 
 
 @contextmanager
@@ -132,3 +134,20 @@ class BrainServerConnectionTests(TestCase):
             with hide_stderr():
                 with self.assertRaises(SystemExit):
                     base_args = parse_base_arguments(argv)
+
+    def test_recording_file(self):
+        """ Recording file argument is used """
+        argv = ['program', '--train-brain', 'life', '--recording-file', 'file']
+        argv.extend(self._default_args())
+        mock_run = Mock()
+        with patch('sys.argv', argv):
+            with patch.dict('bonsai.brain_server_connection._RUN_EVENT_LOOP',
+                            {'tornado': mock_run}):
+                run_for_training_or_prediction('name', Simulator())
+                mock_run.assert_called_with('test-key', ANY, ANY, 'file')
+                mock_run.reset_mock()
+
+                # the kwarg overrides the command line argument
+                run_for_training_or_prediction('name', Simulator(),
+                                               recording_file='override')
+                mock_run.assert_called_with('test-key', ANY, ANY, 'override')

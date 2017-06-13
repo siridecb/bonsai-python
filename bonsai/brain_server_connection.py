@@ -303,6 +303,8 @@ def run_for_training_or_prediction(name,
     base_arguments = parse_base_arguments()
     if base_arguments:
         rcfg = _get_runtime_config(**kwargs)
+        recording_file = rcfg.recording_file or base_arguments.recording_file
+
         driver = _create_driver(name, simulator_or_generator,
                                 base_arguments.brain_url,
                                 rcfg.simulator_connection_class,
@@ -318,4 +320,4 @@ def run_for_training_or_prediction(name,
                                              str(_RUN_EVENT_LOOP.keys())))
 
         event_loop_func(base_arguments.access_key, base_arguments.brain_url,
-                        driver, rcfg.recording_file)
+                        driver, recording_file)
