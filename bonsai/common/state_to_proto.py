@@ -5,6 +5,10 @@ import logging
 log = logging.getLogger(__name__)
 
 
+class SimStateException(Exception):
+    pass
+
+
 def build_luminance_from_state(field_name, proto_msg, luminance):
     """ This function sets a luminance datum onto a protobuf message """
     lum_attr = getattr(proto_msg, field_name)
@@ -71,13 +75,39 @@ def is_proto_type_boolean(field):
 
 def convert_state_to_proto(state_msg, state):
     for field in state_msg.DESCRIPTOR.fields:
+        try:
+            value = state[field.name]
+        except KeyError:
+            raise SimStateException(
+                'The inkling file specifies a field named "{}" which was not found in the '
+                'SimState. Please check the inkling file state schema and the return value '
+                'from get_state().'.format(field.name))
+
         # If the field is a message, assume it is Luminance.
         if is_proto_type_embedded_message(field):
             build_proto_from_embedded_type(
-                field.message_type, field.name, state[field.name], state_msg)
+                field.message_type, field.name, value, state_msg)
         elif is_proto_type_float(field):
-            setattr(state_msg, field.name, float(state[field.name]))
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                raise SimStateException(
+                    'Expected the field "{}" to be a float, but got {} '
+                    'instead.'.format(field.name, repr(value)))
+            setattr(state_msg, field.name, value)
         elif is_proto_type_integer(field):
-            setattr(state_msg, field.name, int(state[field.name]))
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                raise SimStateException(
+                    'Expected the field "{}" to be an integer, but got {} '
+                    'instead.'.format(field.name, repr(value)))
+            setattr(state_msg, field.name, value)
         elif is_proto_type_boolean(field):
-            setattr(state_msg, field.name, bool(state[field.name]))
+            try:
+                value = bool(value)
+            except (TypeError, ValueError):
+                raise SimStateException(
+                    'Expected the field "{}" to be a boolean, but got {} '
+                    'instead.'.format(field.name, repr(value)))
+            setattr(state_msg, field.name, value)

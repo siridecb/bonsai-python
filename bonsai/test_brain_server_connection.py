@@ -151,3 +151,21 @@ class BrainServerConnectionTests(TestCase):
                 run_for_training_or_prediction('name', Simulator(),
                                                recording_file='override')
                 mock_run.assert_called_with('test-key', ANY, ANY, 'override')
+
+    def test_parse_base_arguments_from_cli(self):
+        """ Verify sys.argv values get parsed correctly """
+        argv = ['program', '--train-brain', 'life']
+        argv.extend(self._default_args())
+        with patch('sys.argv', argv):
+            base_arguments = parse_base_arguments()
+            self.assertIn('life/sims/ws', base_arguments.brain_url)
+            self.assertNotIn('life/predictions/ws', base_arguments.brain_url)
+
+    def test_parse_base_arguments_manual(self):
+        """ Verify user can manually specify arguments """
+        argv = []
+        argv.extend(self._default_args())
+        with patch('sys.argv', argv):
+            base_arguments = parse_base_arguments(['--train-brain', 'life'])
+            self.assertIn('life/sims/ws', base_arguments.brain_url)
+            self.assertNotIn('life/predictions/ws', base_arguments.brain_url)

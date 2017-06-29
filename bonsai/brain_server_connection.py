@@ -273,6 +273,7 @@ def create_async_tasks(name,
 
 def run_for_training_or_prediction(name,
                                    simulator_or_generator,
+                                   *args,
                                    **kwargs):
     """
     Helper function for client implemented simulators that exposes the
@@ -300,7 +301,8 @@ def run_for_training_or_prediction(name,
                                                   into the generator. Defaults
                                                   to GeneratorConnection.
     """
-    base_arguments = parse_base_arguments()
+    base_arguments = parse_base_arguments(
+        argv=(args if args else None))
     if base_arguments:
         rcfg = _get_runtime_config(**kwargs)
         recording_file = rcfg.recording_file or base_arguments.recording_file
