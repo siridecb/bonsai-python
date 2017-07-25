@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.12
+### Changed
+- Simplify pytest settings
+
 ## 0.11.1
 ### Added
 - Add more user friendly exception messages when encountering errors when
