@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.11.12
+## 0.12.1
+### Fixed
+- Fix namespace error causing crash for python 2.7 
+
+## 0.12.0
+### Added
+- Add a function `logging_basic_config()` that can be called to setup a
+very simple root logger to make it easy for simulators to setup logging
+before calling into `bonsai.run_for_training_or_prediction()`. Most Bonsai
+simulator samples will use this function. Advanced users who setup their
+own python logging will not need to use this function.
+
+### Fixed
+- Fix a print statement that would output a confusing message about asyncio
+not being imported even when asyncio isn't used. A warning will now be
+logged only when appropriate.
+
+## 0.11.2
 ### Changed
 - Simplify pytest settings
 

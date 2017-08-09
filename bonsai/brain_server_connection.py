@@ -21,7 +21,6 @@ from bonsai.drivers import GeneratorDriverForPrediction
 from bonsai import tornado_event_loop
 
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
 
 
 # The run methods in this dictionary have identical signatures. Asyncio is only
@@ -42,12 +41,13 @@ _CREATE_TASKS = {
     'tornado': tornado_event_loop.create_tasks,
 }
 
+_asyncio_import_exception = None
 try:
     from bonsai import asyncio_event_loop
     _RUN_EVENT_LOOP['asyncio'] = asyncio_event_loop.run
     _CREATE_TASKS['asyncio'] = asyncio_event_loop.create_tasks
 except Exception as e:
-    print('asyncio event loop not imported - %s' % str(e))
+    _asyncio_import_exception = e
 
 
 def _read_bonsai_config():
@@ -202,6 +202,13 @@ _RuntimeConfig = namedtuple('RuntimeConfig', [
 
 def _get_runtime_config(**kwargs):
     event_loop = kwargs.pop('event_loop', 'tornado')
+    if event_loop == 'asyncio' and _asyncio_import_exception:
+        log.warning("The asyncio event loop was specified as a kwarg but "
+                    "it failed to import due to an exception. This will "
+                    "almost certainly result in a subsequent exception. "
+                    "The exception during import was: %s",
+                    _asyncio_import_exception)
+
     recording_file = kwargs.pop('recording_file', None)
     simulator_connection_class = kwargs.pop('simulator_connection_class',
                                             SimulatorConnection)

@@ -8,5 +8,6 @@ brain system.
 # so that they are available at the 'bonsai' package level.
 from bonsai.brain_server_connection import parse_base_arguments
 from bonsai.brain_server_connection import run_for_training_or_prediction
+from bonsai.bonsai_logging import logging_basic_config
 from bonsai.generator import Generator
 from bonsai.simulator import Simulator
