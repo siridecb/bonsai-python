@@ -2,7 +2,10 @@ from __future__ import print_function
 
 import logging
 
+from concurrent.futures import ThreadPoolExecutor
+
 from google.protobuf.text_format import MessageToString, Merge
+
 from tornado import gen
 from tornado.ioloop import IOLoop
 from tornado import websocket as websockets
@@ -14,6 +17,9 @@ from bonsai.proto.generator_simulator_api_pb2 import SimulatorToServer
 from bonsai.drivers import DriverState
 
 log = logging.getLogger(__name__)
+
+# Timeouts for the websocket connection.
+_INITIAL_CONNECT_TIMEOUT_SECS = 60
 
 
 class ManualClosedException(Exception):
@@ -48,10 +54,10 @@ class _Runner(object):
         self.recording_file = recording_file
         if self.recording_file:
             self.recording_queue = queues.Queue()
+        self._sim_executor = ThreadPoolExecutor(max_workers=1)
 
     @gen.coroutine
     def record_to_file(self):
-
         if not self.recording_file:
             return
 
@@ -78,11 +84,13 @@ class _Runner(object):
 
         log.info("About to connect to %s", self.brain_api_url)
 
-        req = HTTPRequest(self.brain_api_url, connect_timeout=60,
-                          request_timeout=60)
+        req = HTTPRequest(
+            self.brain_api_url,
+            connect_timeout=_INITIAL_CONNECT_TIMEOUT_SECS,
+            request_timeout=_INITIAL_CONNECT_TIMEOUT_SECS)
         req.headers['Authorization'] = self.access_key
-        f = websockets.WebSocketClientConnection(IOLoop.current(), req)
-        websocket = yield f.connect_future
+
+        websocket = yield websockets.websocket_connect(req)
         wrapped = _WrapSocket(websocket)
 
         input_message = None
@@ -92,17 +100,18 @@ class _Runner(object):
             # perform the registration and all subsequent "next"s will continue
             # the operation.
             while self.driver.state != DriverState.FINISHED:
-
                 if self.recording_file:
                     yield self._record('RECV', input_message)
-                output_message = self.driver.next(input_message)
+
+                output_message = yield self._sim_executor.submit(
+                    self.driver.next, input_message)
+
                 if self.recording_file:
                     yield self._record('SEND', output_message)
 
                 # If the driver is FINSIHED, don't bother sending and
                 # receiving again before exiting the loop.
                 if self.driver.state != DriverState.FINISHED:
-
                     if not output_message:
                         raise RuntimeError(
                             "Driver did not return a message to send.")

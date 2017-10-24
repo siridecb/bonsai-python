@@ -1,6 +1,5 @@
 from codecs import open
 from setuptools import find_packages, setup
-from os import path
 
 # Get the long description from the README file
 # And also convert to reST
@@ -17,7 +16,7 @@ except ImportError:
 
 setup(
     name='bonsai-python',
-    version='0.12.1',
+    version='0.13.0',
     description='A library creating and training AIs with Bonsai BRAIN',
     long_description=read_md('README.md'),
     url='http://github.com/BonsaiAI/bonsai-python',
@@ -38,10 +37,11 @@ setup(
     ],
     keywords='bonsai',
     install_requires=[
-        'tornado>=4.2.2',
+        'bonsai_config>=0.3.0',
+        'futures>=3.1.1',
         'protobuf>=3.0.0,<4',
         'six>=1.10.0',
-        'bonsai_config>=0.3.0',
+        'tornado>=4.5.0',
     ],
     packages=find_packages()
     )

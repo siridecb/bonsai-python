@@ -141,8 +141,8 @@ class BrainServerConnectionTests(TestCase):
         argv.extend(self._default_args())
         mock_run = Mock()
         with patch('sys.argv', argv):
-            with patch.dict('bonsai.brain_server_connection._RUN_EVENT_LOOP',
-                            {'tornado': mock_run}):
+            with patch.dict('bonsai.brain_server_connection._EVENT_LOOPS',
+                            {'tornado': (mock_run, None)}):
                 run_for_training_or_prediction('name', Simulator())
                 mock_run.assert_called_with('test-key', ANY, ANY, 'file')
                 mock_run.reset_mock()

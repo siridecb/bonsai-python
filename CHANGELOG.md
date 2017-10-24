@@ -1,8 +1,16 @@
 # Changelog
 
+## 0.13.0
+### Changed
+- Simulator event processing moved to a background thread to keep the event loop unblocked.
+### Removed
+- Removed the asyncio event loop driver.
+### Added
+- Added sim_id field to protobuf.
+
 ## 0.12.1
 ### Fixed
-- Fix namespace error causing crash for python 2.7 
+- Fix namespace error causing crash for python 2.7.
 
 ## 0.12.0
 ### Added
@@ -19,7 +27,7 @@ logged only when appropriate.
 
 ## 0.11.2
 ### Changed
-- Simplify pytest settings
+- Simplify pytest settings.
 
 ## 0.11.1
 ### Added
@@ -147,7 +155,7 @@ trace, which makes it look like there was an error.
 of directly relying upon the bonsai-config github repository.
 - Specify an access key when forming websocket connections to Bonsai servers.
 
-## 0.2.1 
+## 0.2.1
 ### Added
 - Add a dependency on bonsai-config, and use the configuration data it
 contains when forming connections to the bonsai server.

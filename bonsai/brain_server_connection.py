@@ -1,9 +1,7 @@
 """
 Thi file contains the client interfaces between simulators or generators and
 the BRAIN backend. It is designed to be relatively modular and compatible with
-both Python2 and Python3, using either Tornado or Asyncio (Python3 only) event
-loops. In addition, the modularity makes it fairly simple to use with a
-synchronous event loop or embed in some other type of client.
+both Python2 and Python3, using pluggable event loops.
 """
 import argparse
 import logging
@@ -23,31 +21,13 @@ from bonsai import tornado_event_loop
 log = logging.getLogger(__name__)
 
 
-# The run methods in this dictionary have identical signatures. Asyncio is only
-# available on Python 3.5 and higher. Runtime errors will be raised if you try
-# to use the asyncio event loop on Python 3.4 and earlier, or any version of
-# Python 2 (even with Trollius).
-_RUN_EVENT_LOOP = {
-    'tornado': tornado_event_loop.run,
+# Mapping of event loop names to their implementation tuple.
+#
+# The first element of the tuple is the event loop run function, and the
+# second element is the create_tasks function.
+_EVENT_LOOPS = {
+    'tornado': (tornado_event_loop.run, tornado_event_loop.create_tasks),
 }
-
-# The methods in this dictionary have identical signatures. Asyncio is only
-# available on Python 3.5 and higher. Runtime errors will be raised if you try
-# to use the asyncio event loop on Python 3.4 and earlier, or any version of
-# Python 2 (even with Trollius).
-# Each method should return a tuple of the simulator run task (first) and a
-# file recording task (second).
-_CREATE_TASKS = {
-    'tornado': tornado_event_loop.create_tasks,
-}
-
-_asyncio_import_exception = None
-try:
-    from bonsai import asyncio_event_loop
-    _RUN_EVENT_LOOP['asyncio'] = asyncio_event_loop.run
-    _CREATE_TASKS['asyncio'] = asyncio_event_loop.create_tasks
-except Exception as e:
-    _asyncio_import_exception = e
 
 
 def _read_bonsai_config():
@@ -56,7 +36,7 @@ def _read_bonsai_config():
     """
     config = BonsaiConfig()
     return (
-      config.access_key(), config.brain_websocket_url(), config.username())
+        config.access_key(), config.brain_websocket_url(), config.username())
 
 
 def _env(key):
@@ -202,19 +182,13 @@ _RuntimeConfig = namedtuple('RuntimeConfig', [
 
 def _get_runtime_config(**kwargs):
     event_loop = kwargs.pop('event_loop', 'tornado')
-    if event_loop == 'asyncio' and _asyncio_import_exception:
-        log.warning("The asyncio event loop was specified as a kwarg but "
-                    "it failed to import due to an exception. This will "
-                    "almost certainly result in a subsequent exception. "
-                    "The exception during import was: %s",
-                    _asyncio_import_exception)
-
     recording_file = kwargs.pop('recording_file', None)
     simulator_connection_class = kwargs.pop('simulator_connection_class',
                                             SimulatorConnection)
     generator_connection_class = kwargs.pop('generator_connection_class',
                                             GeneratorConnection)
     connection_class_kwargs = kwargs.pop('connection_class_kwargs', None)
+
     return _RuntimeConfig(
         event_loop=event_loop,
         recording_file=recording_file,
@@ -222,6 +196,16 @@ def _get_runtime_config(**kwargs):
         generator_connection_class=generator_connection_class,
         connection_class_kwargs=connection_class_kwargs
     )
+
+
+def _get_event_loop_functions(event_loop):
+    try:
+        return _EVENT_LOOPS[event_loop]
+    except KeyError:
+        raise ValueError(
+            'Invalid event loop {} provided; '
+            'only supported event loops are {}'.format(
+                event_loop, list(_EVENT_LOOPS.keys())))
 
 
 def create_async_tasks(name,
@@ -241,9 +225,7 @@ def create_async_tasks(name,
                    include:
                    - event_loop = Specifies which event loop to use to drive
                                   the simulator or generator. May be one of the
-                                  following: ['tornado', 'asyncio']. Choose
-                                  'tornado' if you are running Python 2.7 or
-                                  Python 3.4 and below. Defaults to 'tornado'.
+                                  following: ['tornado']. Defaults to tornado.
                    - recording_file = If defined, records a text file detailing
                                       all the messages communicated among the
                                       simulator/generator and the BRAIN backend
@@ -267,15 +249,9 @@ def create_async_tasks(name,
                             rcfg.generator_connection_class,
                             rcfg.connection_class_kwargs)
 
-    try:
-        tasks_function = _CREATE_TASKS[rcfg.event_loop]
-    except KeyError:
-        raise ValueError('Invalid event loop {} provided; only supported '
-                         'event loops are {}'.format(rcfg.event_loop,
-                                                     str(_CREATE_TASKS.keys())
-                                                     ))
-
-    return tasks_function(access_key, brain_url, driver, rcfg.recording_file)
+    _, create_tasks_function = _get_event_loop_functions(rcfg.event_loop)
+    return create_tasks_function(
+        access_key, brain_url, driver, rcfg.recording_file)
 
 
 def run_for_training_or_prediction(name,
@@ -292,9 +268,7 @@ def run_for_training_or_prediction(name,
                    include:
                    - event_loop = Specifies which event loop to use to drive
                                   the simulator or generator. May be one of the
-                                  following: ['tornado', 'asyncio']. Choose
-                                  'tornado' if you are running Python 2.7 or
-                                  Python 3.4 and below. Defaults to 'tornado'.
+                                  following: ['tornado']. Defaults to tornado.
                    - recording_file = If defined, records a text file detailing
                                       all the messages communicated among the
                                       simulator/generator and the BRAIN backend
@@ -320,13 +294,7 @@ def run_for_training_or_prediction(name,
                                 rcfg.generator_connection_class,
                                 rcfg.connection_class_kwargs)
 
-        try:
-            event_loop_func = _RUN_EVENT_LOOP[rcfg.event_loop]
-        except KeyError:
-            raise ValueError('Invalid event loop {} provided; only supported '
-                             'event loops '
-                             'are {}'.format(rcfg.event_loop,
-                                             str(_RUN_EVENT_LOOP.keys())))
-
-        event_loop_func(base_arguments.access_key, base_arguments.brain_url,
-                        driver, recording_file)
+        run_loop_function, _ = _get_event_loop_functions(rcfg.event_loop)
+        run_loop_function(
+            base_arguments.access_key, base_arguments.brain_url,
+            driver, recording_file)
