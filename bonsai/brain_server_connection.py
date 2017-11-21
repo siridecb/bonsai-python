@@ -17,6 +17,7 @@ from bonsai.drivers import SimulatorDriverForPrediction
 from bonsai.drivers import GeneratorDriverForTraining
 from bonsai.drivers import GeneratorDriverForPrediction
 from bonsai import tornado_event_loop
+from bonsai import websocket_event_loop
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ log = logging.getLogger(__name__)
 # second element is the create_tasks function.
 _EVENT_LOOPS = {
     'tornado': (tornado_event_loop.run, tornado_event_loop.create_tasks),
+    'websocket': (websocket_event_loop.run, websocket_event_loop.create_tasks),
 }
 
 

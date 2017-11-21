@@ -16,7 +16,7 @@ except ImportError:
 
 setup(
     name='bonsai-python',
-    version='0.13.0',
+    version='0.13.1',
     description='A library creating and training AIs with Bonsai BRAIN',
     long_description=read_md('README.md'),
     url='http://github.com/BonsaiAI/bonsai-python',
@@ -42,6 +42,7 @@ setup(
         'protobuf>=3.0.0,<4',
         'six>=1.10.0',
         'tornado>=4.5.0',
+        'websocket-client>=0.40.0',
     ],
     packages=find_packages()
     )

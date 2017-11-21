@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.1
+### Changed
+- Enable message recording for websocket-client
+- Change proxy in bonsai sdk to websocket-client, to support http_proxy
+- Added type checking for luminance in build_luminance_from_state function
+
 ## 0.13.0
 ### Changed
 - Simulator event processing moved to a background thread to keep the event loop unblocked.
