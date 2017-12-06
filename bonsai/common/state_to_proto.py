@@ -78,6 +78,13 @@ def is_proto_type_boolean(field):
     return field.type == field.TYPE_BOOL
 
 
+def is_proto_type_string(field):
+    """ This function determines if the protobuf-field type should resolve
+    to a string
+    """
+    return field.type == field.TYPE_STRING
+
+
 def convert_state_to_proto(state_msg, state):
     for field in state_msg.DESCRIPTOR.fields:
         try:
@@ -114,5 +121,13 @@ def convert_state_to_proto(state_msg, state):
             except (TypeError, ValueError):
                 raise SimStateException(
                     'Expected the field "{}" to be a boolean, but got {} '
+                    'instead.'.format(field.name, repr(value)))
+            setattr(state_msg, field.name, value)
+        elif is_proto_type_string(field):
+            try:
+                value = str(value)
+            except (TypeError, ValueError):
+                raise SimStateException(
+                    'Expected the field "{}" to be a string, but got {} '
                     'instead.'.format(field.name, repr(value)))
             setattr(state_msg, field.name, value)
