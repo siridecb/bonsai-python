@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.2
+### Changed
+- Updates for unit testing
+
 ## 0.13.1
 ### Changed
 - Enable message recording for websocket-client

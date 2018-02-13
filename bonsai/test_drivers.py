@@ -1,3 +1,6 @@
+# for python2.7 compatibility and the use of print(file=)
+from __future__ import print_function
+
 import unittest
 import os
 
@@ -88,8 +91,7 @@ class SimulatorDriverTests(unittest.TestCase):
         cls.blackjack_successful_messages = load_test_message_stream(
             os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          os.pardir,
-                         os.pardir,
-                         'test_resources',
+                         'test-resources',
                          'blackjack_successful_run.txt'))
 
     def _run_training(self, messages):

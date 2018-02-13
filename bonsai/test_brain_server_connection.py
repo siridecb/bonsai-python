@@ -5,7 +5,10 @@ import os
 import sys
 from contextlib import contextmanager
 from unittest import TestCase
-from unittest.mock import ANY, Mock, patch
+try:
+    from unittest.mock import ANY, Mock, patch
+except ImportError:
+    from mock import ANY, Mock, patch
 
 from bonsai.simulator import Simulator
 from bonsai.brain_server_connection import parse_base_arguments
@@ -163,9 +166,7 @@ class BrainServerConnectionTests(TestCase):
 
     def test_parse_base_arguments_manual(self):
         """ Verify user can manually specify arguments """
-        argv = []
-        argv.extend(self._default_args())
-        with patch('sys.argv', argv):
-            base_arguments = parse_base_arguments(['--train-brain', 'life'])
-            self.assertIn('life/sims/ws', base_arguments.brain_url)
-            self.assertNotIn('life/predictions/ws', base_arguments.brain_url)
+        base_arguments = parse_base_arguments(
+            ['--access-key', 'test_key', '--train-brain', 'life'])
+        self.assertIn('life/sims/ws', base_arguments.brain_url)
+        self.assertNotIn('life/predictions/ws', base_arguments.brain_url)

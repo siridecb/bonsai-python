@@ -1,3 +1,5 @@
+# for python2.7 compatibility and the use of print(file=)
+from __future__ import print_function
 import time
 import requests
 import json

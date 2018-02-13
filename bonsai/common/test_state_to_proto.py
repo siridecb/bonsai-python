@@ -1,3 +1,4 @@
+import sys
 import unittest
 from collections import namedtuple
 from bonsai.inkling_types import Luminance
@@ -31,8 +32,13 @@ class TestStateToProto(unittest.TestCase):
         NOTE: We do not need an assert as the testing framework
               catches that a function did not run properly
         """
-        lum_from_state = Luminance(0, 0, bytes(0))
-        lum_in_proto = Luminance(0, 0, bytes(0))
+        # python2.7 bytes is an alias for str, use bytearray instead
+        if sys.version_info.major < 3:
+            lum_from_state = Luminance(0, 0, bytearray(0))
+            lum_in_proto = Luminance(0, 0, bytearray(0))
+        else:
+            lum_from_state = Luminance(0, 0, bytes(0))
+            lum_in_proto = Luminance(0, 0, bytes(0))
         field_name = "state"
         proto_msg = SimState(lum_in_proto, 'generic_msg')
         build_luminance_from_state(field_name, proto_msg, lum_from_state)
